@@ -75,6 +75,8 @@ Alert-style pipelines (site-checks, stale-prs, issues-already-fixed, dev-machine
 
 ## Day to day
 
+The quickest way to see how everything is going is the engine's local dashboard: `pipelines web` opens it at http://127.0.0.1:7717. It shows which pipelines are scheduled, which failed their last run, what each run cost, what every step did and which actions the engine denied an agent. A pipeline that is installed but has stopped running shows up in red there too. See [the dashboard](https://github.com/startcat/agentic-pipelines#the-dashboard).
+
 ```bash
 pipelines status                    # last runs of every pipeline
 pipelines show <pipeline> <run-id>  # everything about one run
