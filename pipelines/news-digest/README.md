@@ -4,6 +4,12 @@ Reads your RSS/Atom feeds every morning (blogs, YouTube channels, Hacker News...
 
 Uses one agent step (Sonnet): about $0.15 per run with ~25 new items, capped at $0.50. Days with nothing new cost nothing (the agent is skipped).
 
+To make it cheaper, change `model: sonnet` to `model: haiku` in [`agents/news-editor.md`](../../agents/news-editor.md): Haiku costs half as much per token. In our test of news-digest, a run went from about $0.15 to $0.11; check that the result is good enough for you.
+
+## Before you start
+
+You need an Anthropic API key in `.env` as `ANTHROPIC_API_KEY`. Create one in the [Claude Console](https://platform.claude.com/); the agent's runs are billed to it at API prices.
+
 ## Install
 
 ```bash

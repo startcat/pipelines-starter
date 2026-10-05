@@ -12,11 +12,13 @@ Seven ready-to-use pipelines for [agentic-pipelines](https://github.com/startcat
 | [docs-drift](pipelines/docs-drift/) | Compares a repo's docs with its code and prepares fixes on a local branch. Never pushes. | ✓ | weekly |
 | [news-digest](pipelines/news-digest/) | Reads your RSS feeds and YouTube channels and writes a digest with content ideas. | ✓ | daily |
 
-Every pipeline is **read-only by default**: nothing pushes, merges, closes or deletes. The ones with an agent cap their spend per run with `max_cost_usd`.
+Every pipeline is **read-only by default**: nothing pushes, merges, closes or deletes.
+
+**What it costs.** The four shell-only pipelines don't use AI and cost nothing. The three with an agent call the Anthropic API with your key and cap their spend per run (`max_cost_usd`). At API prices, with Sonnet, our test runs cost about $0.25 per weekly briefing, $0.15 per news digest and $0.20–0.35 per docs review. To make them cheaper, switch an agent to `model: haiku` in `agents/` (half the price per token).
 
 ## Quick start
 
-**1. Install the engine** (needs macOS, [Bun](https://bun.sh), `git` and `jq`; the pipelines with an agent also need a signed-in [Claude Code](https://docs.anthropic.com/en/docs/claude-code) session):
+**1. Install the engine** (needs macOS, [Bun](https://bun.sh), `git` and `jq`; the pipelines with an agent also need an [Anthropic API key](https://platform.claude.com/)):
 
 ```bash
 git clone https://github.com/startcat/agentic-pipelines.git ~/agentic-pipelines
@@ -29,7 +31,7 @@ alias pipelines="bun run ~/agentic-pipelines/src/cli/index.ts"   # add this line
 ```bash
 git clone https://github.com/startcat/pipelines-starter.git ~/pipelines-starter
 cd ~/pipelines-starter
-cp .env.example .env      # only needed for the GitHub pipelines and phone notifications
+cp .env.example .env      # API key for the agent pipelines, GitHub token, phone notifications
 ```
 
 **3. Install the pipelines you want.** Each one is a single command; its README explains every option.
@@ -56,7 +58,7 @@ pipelines run site-checks --set urls="https://example.com"
 |---|---|
 | Reports | `reports/<pipeline>/latest.md`, plus one file per day next to it |
 | Your settings | `.params.local.json` (written by `install --set`) |
-| Secrets | `.env` (only `GITHUB_TOKEN` and, optionally, `NTFY_TOPIC`) |
+| Secrets | `.env` (`ANTHROPIC_API_KEY`, `GITHUB_TOKEN` and, optionally, `NTFY_TOPIC`) |
 | Run history | `.runs/` — or browse it with `pipelines web` |
 | Clones and work files of the agent pipelines | `~/Library/Application Support/pipelines/workspaces/<pipeline>/` |
 

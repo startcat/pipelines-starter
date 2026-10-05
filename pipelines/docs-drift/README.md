@@ -4,6 +4,12 @@ Once a week, **if the code changed**, an agent reads a repository's docs next to
 
 Uses an agent (Sonnet) only on weeks with new commits, capped at $1.00 per run (a typical review costs $0.20–0.35); weeks without changes cost nothing.
 
+To make it cheaper, change `model: sonnet` to `model: haiku` in [`agents/docs-reviewer.md`](../../agents/docs-reviewer.md): Haiku costs half as much per token. In our test of news-digest, a run went from about $0.15 to $0.11; check that the result is good enough for you.
+
+## Before you start
+
+You need an Anthropic API key in `.env` as `ANTHROPIC_API_KEY`. Create one in the [Claude Console](https://platform.claude.com/); the agent's runs are billed to it at API prices.
+
 ## Install
 
 ```bash

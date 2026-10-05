@@ -4,12 +4,14 @@ Every Friday afternoon, writes a **short, plain-language briefing of what happen
 
 One agent step (Sonnet), capped at $0.50. In testing, a busy repo (68 merged pull requests, 124 new issues) cost about **$0.25 per run**. A week with no activity costs nothing: the agent is skipped.
 
+To make it cheaper, change `model: sonnet` to `model: haiku` in [`agents/briefing-writer.md`](../../agents/briefing-writer.md): Haiku costs half as much per token. In our test of news-digest, a run went from about $0.15 to $0.11; check that the result is good enough for you.
+
 ## Before you start
 
-You need a GitHub token in `.env` as `GITHUB_TOKEN`. Create a [fine-grained token](https://github.com/settings/personal-access-tokens/new) with access to the repositories you want to cover and these **read-only** permissions: **Contents**, **Issues**, **Pull requests**. For public repos only, a token with no extra permissions is enough.
+You need two things in `.env`: an Anthropic API key as `ANTHROPIC_API_KEY` (create one in the [Claude Console](https://platform.claude.com/); the agent's runs are billed to it at API prices), and a GitHub token as `GITHUB_TOKEN`. Create a [fine-grained token](https://github.com/settings/personal-access-tokens/new) with access to the repositories you want to cover and these **read-only** permissions: **Contents**, **Issues**, **Pull requests**. For public repos only, a token with no extra permissions is enough.
 
 ```bash
-cp .env.example .env   # then paste the token after GITHUB_TOKEN=
+cp .env.example .env   # then paste the key and the token
 ```
 
 ## Install
