@@ -1,0 +1,222 @@
+name: dev-machine-doctor
+description: Weekly read-only health check of a macOS development machine (free disk, biggest dev caches with the command to clean each, listening ports, long-running node/bun/python processes). Alerts only when free disk is below a threshold. Never deletes anything.
+version: 1
+
+params:
+  min_free_gb:
+    description: Alert when free space on / drops below this many GB. This is the only condition that makes the run fail and notify.
+    default: 20
+  orphan_hours:
+    description: List node, bun and python processes that have been running for longer than this many hours.
+    default: 24
+  du_timeout_s:
+    description: Maximum seconds to wait for the cache size measurements (they run in parallel); a cache still being measured after that is shown as "timed out".
+    default: 240
+
+requires:
+  bin: [du, df, lsof, ps, awk, jq]
+
+triggers:
+  - cron: "0 10 * * 1"
+
+notify:
+  on: [failed]
+  stale_after: 192h
+  channel: macos
+
+steps:
+  - id: check
+    type: shell
+    timeout: 10m
+    run: |
+      set -euo pipefail
+      min_free_gb="{{params.min_free_gb}}"
+      orphan_hours="{{params.orphan_hours}}"
+      du_timeout="{{params.du_timeout_s}}"
+      tmp=$(mktemp -d)
+      trap 'rm -rf "$tmp"' EXIT
+      # KB → "1.2 GB" / "340 MB"
+      human() { awk -v k="$1" 'BEGIN { if (k >= 1048576) printf "%.1f GB", k / 1048576; else printf "%d MB", k / 1024 }'; }
+      tilde() { printf '%s' "$1" | sed "s#^$HOME#~#"; }
+
+      # 1. Free disk on /. On APFS, "Available" doesn't count purgeable space.
+      free_kb=$(df -k / | awk 'NR == 2 { print $4 }')
+      size_kb=$(df -k / | awk 'NR == 2 { print $2 }')
+      free_gb=$(( free_kb / 1048576 ))
+      low_disk=0
+      [ "$free_gb" -ge "$min_free_gb" ] || low_disk=1
+      echo "free on /: $free_gb GB (min $min_free_gb)" >&2
+
+      # 2. Dev caches: measured in parallel in the background, with one deadline.
+      # Format: id|path|clean command|note
+      cat > "$tmp/caches" <<EOF
+      derived|$HOME/Library/Developer/Xcode/DerivedData|rm -rf ~/Library/Developer/Xcode/DerivedData|quit Xcode first; it rebuilds it
+      npm|$HOME/.npm|npm cache clean --force|
+      bun|$HOME/.bun/install/cache|bun pm cache rm|
+      yarn|$HOME/Library/Caches/Yarn|yarn cache clean|
+      gradle|$HOME/.gradle/caches|rm -rf ~/.gradle/caches|stop Gradle daemons first with gradle --stop
+      EOF
+      : > "$tmp/jobs"
+      while IFS='|' read -r id path cmd note; do
+        [ -d "$path" ] || continue
+        du -sk "$path" > "$tmp/du.$id" 2>/dev/null &
+        echo "$id $!" >> "$tmp/jobs"
+      done < "$tmp/caches"
+      if [ -d "$HOME/Library/Caches" ]; then
+        # One entry per app folder; the total of ~/Library/Caches is their sum.
+        du -sk "$HOME/Library/Caches"/* > "$tmp/du.libcaches" 2>/dev/null &
+        echo "libcaches $!" >> "$tmp/jobs"
+      fi
+
+      # 3. Docker, only if installed (it is not a requirement) and the daemon answers.
+      docker_bin=$(command -v docker 2>/dev/null || true)
+      for c in /usr/local/bin/docker /opt/homebrew/bin/docker "$HOME/.docker/bin/docker" "$HOME/.orbstack/bin/docker" /Applications/Docker.app/Contents/Resources/bin/docker; do
+        [ -n "$docker_bin" ] && break
+        [ -x "$c" ] && docker_bin="$c"
+      done
+      docker_pid=""
+      if [ -n "$docker_bin" ]; then
+        "$docker_bin" system df > "$tmp/docker.out" 2>/dev/null &
+        echo "docker $!" >> "$tmp/jobs"
+      fi
+
+      # One shared deadline; whatever is still running then is stopped and marked.
+      deadline=$(( $(date +%s) + du_timeout ))
+      : > "$tmp/timedout"
+      while read -r id p; do
+        while kill -0 "$p" 2>/dev/null && [ "$(date +%s)" -lt "$deadline" ]; do sleep 1; done
+        if kill "$p" 2>/dev/null; then echo "$id" >> "$tmp/timedout"; echo "timed out: $id" >&2; fi
+      done < "$tmp/jobs"
+      wait 2>/dev/null || true
+      timed_out() { grep -qx "$1" "$tmp/timedout"; }
+
+      cache_rows=""
+      caches_kb=0
+      if [ -f "$tmp/du.libcaches" ]; then
+        lib_kb=$(awk '{ s += $1 } END { print s + 0 }' "$tmp/du.libcaches")
+        caches_kb=$((caches_kb + lib_kb))
+        lib_size=$(human "$lib_kb")
+        if timed_out libcaches; then
+          if [ "$lib_kb" -gt 0 ]; then lib_size="more than $lib_size (timed out)"; else lib_size="timed out"; fi
+        fi
+        cache_rows="$cache_rows| \`~/Library/Caches\` (all apps, includes Yarn below) | $lib_size | Per app folder: quit the app, then \`rm -rf ~/Library/Caches/<folder>\` |
+      "
+      fi
+      while IFS='|' read -r id path cmd note; do
+        [ -d "$path" ] || continue
+        kb=$(awk 'NR == 1 { print $1 }' "$tmp/du.$id" 2>/dev/null || true)
+        if [ -n "$kb" ] && ! timed_out "$id"; then
+          size=$(human "$kb")
+          [ "$id" = "yarn" ] || caches_kb=$((caches_kb + kb))
+        else
+          size="timed out"
+        fi
+        [ -z "$note" ] || note=" ($note)"
+        cache_rows="$cache_rows| \`$(tilde "$path")\` | $size | \`$cmd\`$note |
+      "
+      done < "$tmp/caches"
+
+      top_rows=""
+      if [ -s "$tmp/du.libcaches" ]; then
+        top_rows=$(sort -rn "$tmp/du.libcaches" | head -8 | while read -r kb path; do
+          printf '| `%s` | %s |\n' "$(tilde "$path")" "$(human "$kb")"
+        done)
+      fi
+
+      if [ -z "$docker_bin" ]; then
+        docker_md="Docker is not installed (or not on the usual paths): skipped."
+      elif timed_out docker; then
+        docker_md="Docker is installed but \`docker system df\` didn't answer in time (daemon starting or stuck): skipped."
+      elif [ -s "$tmp/docker.out" ]; then
+        docker_md=$(printf '```\n%s\n```\n\nTo reclaim it, by hand: `docker system prune` (stopped containers, unused networks, dangling images and build cache). `docker system prune -a --volumes` frees more but also deletes every unused image and volume.' "$(cat "$tmp/docker.out")")
+      else
+        docker_md="Docker is installed but the daemon is not running (or didn't answer): skipped."
+      fi
+
+      # 4. Listening TCP ports (only this user's processes are visible without sudo).
+      ports=$(lsof +c 0 -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 {
+          name = $9; port = name; sub(/.*:/, "", port); addr = name; sub(/:[^:]*$/, "", addr)
+          key = $1 "|" $2 "|" port
+          if (!(key in seen)) { seen[key] = 1; order[++n] = key; where[key] = "local only" }
+          if (addr != "127.0.0.1" && addr != "[::1]" && addr != "localhost") where[key] = "all interfaces"
+        } END { for (i = 1; i <= n; i++) { split(order[i], a, "|"); print a[3] "|" a[1] "|" a[2] "|" where[order[i]] } }' | sort -t'|' -k1,1n || true)
+      n_ports=0
+      port_rows=""
+      if [ -n "$ports" ]; then
+        n_ports=$(printf '%s\n' "$ports" | wc -l | tr -d ' ')
+        port_rows=$(printf '%s\n' "$ports" | awk -F'|' '{ gsub(/\\x20/, " ", $2); printf "| %s | %s | %s | %s |\n", $1, $2, $3, $4 }')
+      fi
+
+      # 5. node / bun / python processes older than orphan_hours.
+      procs=$(ps -x -U "$(id -u)" -o pid=,etime=,command= | awk -v min="$orphan_hours" '{
+          pid = $1; et = $2; bin = $3; n = split(bin, parts, "/"); base = parts[n]
+          if (base !~ /^(node|bun|python[0-9.]*|Python)$/) next
+          d = 0; if (index(et, "-")) { split(et, x, "-"); d = x[1]; et = x[2] }
+          k = split(et, t, ":"); h = (k == 3) ? t[1] : 0
+          hours = d * 24 + h
+          if (hours < min) next
+          cmd = ""; for (i = 3; i <= NF; i++) cmd = cmd (i > 3 ? " " : "") $i
+          gsub(/\|/, "\\|", cmd); if (length(cmd) > 100) cmd = substr(cmd, 1, 99) "…"
+          age = (hours >= 48) ? int(hours / 24) " days" : hours " h"
+          printf "%d|| %s | %s | %s | `%s` | `kill %s` |\n", hours, pid, base, age, cmd, pid
+        }' | sort -t'|' -k1,1rn | cut -d'|' -f2- || true)
+      n_procs=0
+      [ -z "$procs" ] || n_procs=$(printf '%s\n' "$procs" | wc -l | tr -d ' ')
+
+      # Report
+      if [ "$low_disk" -eq 1 ]; then
+        title="Low disk: $free_gb GB free on / (minimum $min_free_gb GB)"
+      else
+        title="$free_gb GB free on /, dev caches use $(human "$caches_kb")"
+        [ ! -s "$tmp/timedout" ] || title="$title+ (some timed out)"
+      fi
+      [ "$n_procs" -eq 0 ] || title="$title, $n_procs long-running process(es)"
+      {
+        printf '# %s\n\n%s · read-only check: nothing was deleted or stopped. The commands below are for you to run by hand if you want.\n\n' "$title" "$(date '+%Y-%m-%d %H:%M')"
+        printf '## Disk\n\n%s free of %s on `/` (alert below %s GB). On APFS this does not count purgeable space, so Finder may show a bit more.\n\n' "$(human "$free_kb")" "$(human "$size_kb")" "$min_free_gb"
+        printf '## Dev caches\n\n| Cache | Size | To clean it, run by hand |\n|---|---|---|\n%s\n' "$cache_rows"
+        if [ -n "$top_rows" ]; then
+          partial=""
+          if timed_out libcaches; then partial=" (partial: measuring timed out)"; fi
+          printf '### Biggest folders in `~/Library/Caches`%s\n\n| Folder | Size |\n|---|---|\n%s\n\n' "$partial" "$top_rows"
+        fi
+        printf '## Docker\n\n%s\n\n' "$docker_md"
+        if [ "$n_ports" -gt 0 ]; then
+          printf '## Listening TCP ports (%s)\n\n| Port | Process | PID | Listens on |\n|---|---|---|---|\n%s\n\n' "$n_ports" "$port_rows"
+        else
+          printf '## Listening TCP ports\n\nNone.\n\n'
+        fi
+        if [ "$n_procs" -gt 0 ]; then
+          printf '## node / bun / python running for more than %s h (%s)\n\nMaybe a dev server you keep open on purpose, maybe a leftover. Check before killing.\n\n| PID | Process | Running for | Command | To stop it |\n|---|---|---|---|---|\n%s\n' "$orphan_hours" "$n_procs" "$procs"
+        else
+          printf '## node / bun / python running for more than %s h\n\nNone.\n' "$orphan_hours"
+        fi
+      } > "$tmp/report.md"
+      jq -n --rawfile r "$tmp/report.md" --argjson low "$low_disk" --argjson f "$free_gb" '{low_disk: ($low == 1), free_gb: $f, report: $r}'
+    outputs:
+      low_disk: boolean
+      free_gb: number
+      report: string
+
+  - id: save
+    type: shell
+    run: |
+      set -euo pipefail
+      printf '%s\n' "{{check.report}}" | sh ../../scripts/write-report.sh dev-machine-doctor
+    outputs:
+      report: string
+      headline: string
+
+  # The red run is the alert: it fails ONLY when free disk is below min_free_gb.
+  # Big caches, open ports and old processes are informational: they go in the
+  # report, never in a notification.
+  - id: verdict
+    type: shell
+    inputs: [save.report]
+    run: |
+      set -euo pipefail
+      if [ "{{check.low_disk}}" = "true" ]; then
+        echo "{{save.headline}}. Details: {{save.report}}" >&2
+        exit 1
+      fi
+      echo "free disk OK ({{check.free_gb}} GB)" >&2

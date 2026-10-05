@@ -1,0 +1,96 @@
+name: site-checks
+description: Checks a list of websites every morning (HTTP status, response time, TLS certificate expiry) and alerts only when something is wrong.
+version: 1
+
+params:
+  urls:
+    description: Space-separated list of URLs to check, e.g. "https://example.com https://example.com/sitemap.xml".
+    required: true
+  cert_warn_days:
+    description: Warn when a TLS certificate expires in fewer than this many days.
+    default: 14
+  slow_ms:
+    description: Warn when a page takes longer than this to respond, in milliseconds.
+    default: 3000
+
+requires:
+  bin: [curl, openssl, jq]
+
+triggers:
+  - cron: "0 8 * * *"
+
+notify:
+  on: [failed]
+  stale_after: 50h
+  channel: macos
+
+steps:
+  - id: check
+    type: shell
+    timeout: 5m
+    run: |
+      set -euo pipefail
+      warn_days="{{params.cert_warn_days}}"
+      slow_ms="{{params.slow_ms}}"
+      now=$(date +%s)
+      problems=0
+      rows=""
+      for url in {{params.urls}}; do
+        res=$(curl -sS -o /dev/null -L --max-time 20 -w '%{http_code} %{time_total}' "$url" 2>/dev/null || echo "000 0")
+        code=${res%% *}
+        ms=$(printf '%s' "${res##* }" | awk '{printf "%d", $1 * 1000}')
+        note=""
+        case "$code" in
+          2??|3??) ;;
+          000) note="unreachable" ;;
+          *) note="HTTP $code" ;;
+        esac
+        if [ -z "$note" ] && [ "$ms" -gt "$slow_ms" ]; then note="slow (${ms} ms)"; fi
+        days="-"
+        case "$url" in
+          https://*)
+            host=$(printf '%s' "$url" | sed -E 's#^https://([^/:]+).*#\1#')
+            end=$(echo | openssl s_client -servername "$host" -connect "$host:443" 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2 || true)
+            if [ -n "$end" ]; then
+              exp=$(date -j -f "%b %e %T %Y %Z" "$end" +%s 2>/dev/null || echo "")
+              if [ -n "$exp" ]; then
+                days=$(( (exp - now) / 86400 ))
+                if [ "$days" -lt 0 ]; then note="certificate expired"
+                elif [ -z "$note" ] && [ "$days" -lt "$warn_days" ]; then note="certificate expires in $days days"; fi
+              fi
+            fi
+            ;;
+        esac
+        status="ok"
+        if [ -n "$note" ]; then status="$note"; problems=$((problems + 1)); fi
+        rows="$rows| $url | $code | $ms ms | $days | $status |
+      "
+        echo "$url → $code, $ms ms, cert $days days: $status" >&2
+      done
+      if [ "$problems" -eq 0 ]; then title="All sites OK"; else title="$problems site(s) need attention"; fi
+      report=$(printf '# %s\n\n%s\n\n| URL | HTTP | Time | Cert (days) | Status |\n|---|---|---|---|---|\n%s' "$title" "$(date '+%Y-%m-%d %H:%M')" "$rows")
+      jq -n --arg r "$report" --argjson p "$problems" '{problems: $p, report: $r}'
+    outputs:
+      problems: number
+      report: string
+
+  - id: save
+    type: shell
+    run: |
+      set -euo pipefail
+      printf '%s\n' "{{check.report}}" | sh ../../scripts/write-report.sh site-checks
+    outputs:
+      report: string
+      headline: string
+
+  # The red run is the alert: notify.on [failed] fires only when a site has a problem.
+  - id: verdict
+    type: shell
+    inputs: [save.report]
+    run: |
+      set -euo pipefail
+      if [ "{{check.problems}}" -gt 0 ]; then
+        echo "{{save.headline}}. Details: {{save.report}}" >&2
+        exit 1
+      fi
+      echo "all sites OK" >&2

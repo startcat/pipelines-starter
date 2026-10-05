@@ -1,0 +1,232 @@
+name: docs-drift
+description: Once a week, if the code changed, an agent checks a repository's docs against its code and prepares fixes for anything outdated on a local branch of its own clone. Never pushes.
+version: 1
+
+params:
+  repo_url:
+    description: Git URL of the repository to check (https or ssh), e.g. "https://github.com/owner/repo.git". The pipeline works on its own clone, never on yours.
+    required: true
+  branch:
+    description: Branch to review. Empty means the remote's default branch.
+    default: ""
+  docs:
+    description: Space-separated doc files, directories or simple globs, relative to the repo root (e.g. "README.md docs CONTRIBUTING.md"). Directories are searched for .md, .mdx, .rst, .adoc and .txt files.
+    default: "README.md docs"
+  workdir:
+    description: Where the pipeline keeps its clone and state. Empty means ~/Library/Application Support/pipelines/workspaces/docs-drift.
+    default: ""
+
+requires:
+  agents: [docs-reviewer]
+  bin: [git, jq]
+
+triggers:
+  - cron: "0 7 * * 1"
+
+notify:
+  on: [success, failed]
+  stale_after: 200h
+  channel: macos
+
+steps:
+  # Clone (first run) or fetch + hard reset the pipeline's OWN clone, find the
+  # docs, and decide whether the code changed since the last successful review.
+  - id: prepare
+    type: shell
+    timeout: 10m
+    run: |
+      set -euo pipefail
+      url="{{params.repo_url}}"
+      branch="{{params.branch}}"
+      docs="{{params.docs}}"
+      ws="{{params.workdir}}"
+      [ -n "$ws" ] || ws="$HOME/Library/Application Support/pipelines/workspaces/docs-drift"
+      repo=$(printf '%s' "$url" | sed -E 's#/+$##; s#\.git$##; s#^.*[:/]([^/:]+/[^/:]+)$#\1#')
+      case "$repo" in
+        */*) ;;
+        *) echo "cannot read owner/repo from repo_url: $url" >&2; exit 1 ;;
+      esac
+      dir="$ws/$(printf '%s' "$repo" | tr '/' '-')"
+      state="$dir.last-reviewed"
+      mkdir -p "$ws"
+      if [ ! -e "$dir" ]; then
+        echo "cloning $url into $dir" >&2
+        git clone --quiet --filter=blob:none "$url" "$dir" >&2
+        touch "$dir/.git/docs-drift-clone"
+      fi
+      # Only ever reset a clone this pipeline created itself.
+      if [ ! -f "$dir/.git/docs-drift-clone" ]; then
+        echo "$dir exists but was not created by docs-drift; refusing to touch it. Remove it or pick another workdir." >&2
+        exit 1
+      fi
+      origin=$(git -C "$dir" remote get-url origin)
+      if [ "$origin" != "$url" ]; then
+        echo "$dir is a clone of $origin, not $url; refusing to touch it." >&2
+        exit 1
+      fi
+      git -C "$dir" fetch --quiet --prune origin >&2
+      if [ -z "$branch" ]; then
+        git -C "$dir" remote set-head origin --auto >/dev/null 2>&1 || true
+        branch=$(git -C "$dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)
+        if [ -z "$branch" ]; then
+          echo "could not detect the default branch of $url; set the branch param" >&2
+          exit 1
+        fi
+      fi
+      git -C "$dir" checkout --quiet --force -B "$branch" "origin/$branch" >&2
+      git -C "$dir" reset --quiet --hard "origin/$branch" >&2
+      git -C "$dir" clean --quiet -fd >&2
+      head=$(git -C "$dir" rev-parse HEAD)
+
+      # Resolve the docs list (globs expand inside the clone).
+      cd "$dir"
+      files=""
+      for p in $docs; do
+        p=${p#./}
+        p=${p%/}
+        if [ -d "$p" ]; then
+          found=$(find "$p" -type f \( -name '*.md' -o -name '*.mdx' -o -name '*.rst' -o -name '*.adoc' -o -name '*.txt' \) -not -path '*/node_modules/*' | sort)
+          files="$files$found
+      "
+        elif [ -f "$p" ]; then
+          files="$files$p
+      "
+        else
+          echo "warning: $p not found in $repo" >&2
+        fi
+      done
+      files=$(printf '%s\n' "$files" | sed '/^$/d' | awk '!seen[$0]++')
+      count=$(printf '%s\n' "$files" | grep -c . || true)
+      if [ "$count" -eq 0 ]; then
+        echo "none of the docs paths ($docs) exist in $repo on $branch" >&2
+        exit 1
+      fi
+
+      # Did the code change since the last successful review?
+      last=""
+      if [ -f "$state" ]; then last=$(head -n 1 "$state"); fi
+      short=$(printf '%.12s' "$head")
+      if [ -z "$last" ]; then
+        changed=true
+        changes="First review of this repository."
+      elif [ "$last" = "$head" ]; then
+        changed=false
+        changes="Nothing changed since the last review."
+      elif git cat-file -e "$last^{commit}" 2>/dev/null; then
+        changed=true
+        n=$(git diff --name-only "$last" "$head" | wc -l | tr -d ' ')
+        list=$(git diff --name-only "$last" "$head" | sed -n '1,150p')
+        changes=$(printf '%s files changed since the last review (%.12s..%s). First 150:\n\n```\n%s\n```' "$n" "$last" "$short" "$list")
+      else
+        changed=true
+        changes="The last reviewed commit is no longer in the history (force-push?), so treat this as a first review."
+      fi
+      echo "$repo $branch at $short: $count doc file(s), changed=$changed" >&2
+      jq -n --arg workdir "$dir" --arg state "$state" --arg repo "$repo" --arg branch "$branch" \
+        --arg head "$head" --arg last "$last" --argjson changed "$changed" \
+        --arg doc_files "$files" --argjson doc_count "$count" --arg changes "$changes" \
+        '{workdir: $workdir, state_file: $state, repo: $repo, branch: $branch, head: $head, last: $last, changed: $changed, doc_files: $doc_files, doc_count: $doc_count, changes: $changes}'
+    outputs:
+      workdir: string
+      state_file: string
+      repo: string
+      branch: string
+      head: string
+      last: string
+      changed: boolean
+      doc_files: string
+      doc_count: number
+      changes: string
+
+  # The agent edits docs in the clone (its only write root). It has no shell and no git.
+  - id: review
+    agent: docs-reviewer
+    prompt: steps/review.md
+    cwd: "{{prepare.workdir}}"
+    when: "{{prepare.changed}}"
+    tools: [Read, Glob, Grep, Edit, Write]
+    max_cost_usd: 1.0
+    timeout: 20m
+    outputs:
+      report: string
+      changed_files: string[]
+
+  # Commit the agent's doc edits on a LOCAL branch (never pushed), save the
+  # report, and remember the reviewed commit.
+  - id: commit
+    type: shell
+    when: "{{review.report}}"
+    timeout: 5m
+    run: |
+      set -euo pipefail
+      pdir=$(pwd)
+      dir="{{prepare.workdir}}"
+      state="{{prepare.state_file}}"
+      head="{{prepare.head}}"
+      base="{{prepare.branch}}"
+      repo="{{prepare.repo}}"
+      allowed="{{prepare.doc_files}}"
+      report="{{review.report}}"
+      short=$(printf '%.12s' "$head")
+      fence='```'
+      cd "$dir"
+      git add -A
+      # Keep only edits to the listed docs; undo anything else the agent touched.
+      list=$(git -c core.quotePath=false diff --cached --name-only)
+      dropped=""
+      while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        if ! printf '%s\n' "$allowed" | grep -Fxq -- "$f"; then
+          git reset --quiet -- "$f"
+          if git cat-file -e "HEAD:$f" 2>/dev/null; then git checkout --quiet -- "$f"; else rm -f -- "$f"; fi
+          dropped="$dropped $f"
+          echo "dropped edit outside the docs list: $f" >&2
+        fi
+      done <<EOF
+      $list
+      EOF
+      branch=""
+      if git diff --cached --quiet; then
+        tail=$(printf '## Details\n\nNo edits. Reviewed %s at `%s` (branch `%s`).' "$repo" "$short" "$base")
+      else
+        branch="docs-drift/$(date +%Y-%m-%d)"
+        git checkout --quiet -B "$branch"
+        git -c user.name=docs-drift -c user.email=docs-drift@localhost commit --quiet -m "docs: fix outdated documentation (docs-drift)" >&2
+        git checkout --quiet "$base"
+        files=$(git diff --name-only "$head" "$branch" | sed 's/^/- /')
+        tail=$(
+          printf '## Review the changes\n\n'
+          printf 'The fixes are committed on the local branch `%s` of the clone docs-drift keeps for itself. Nothing was pushed.\n\n' "$branch"
+          printf '%s\n\n' "$files"
+          printf '%ssh\ncd "%s" && git diff %s..%s\n%s\n\n' "$fence" "$dir" "$short" "$branch" "$fence"
+          printf '## Push it yourself if you agree\n\n'
+          printf '%ssh\ncd "%s" && git push origin %s\n%s\n\n' "$fence" "$dir" "$branch" "$fence"
+          printf 'Then open a pull request from `%s` on %s. If you disagree, do nothing: the next run starts again from the remote branch.' "$branch" "$repo"
+        )
+      fi
+      if [ -n "$dropped" ]; then
+        tail=$(printf '%s\n\nIgnored edits outside the docs list:%s' "$tail" "$dropped")
+      fi
+      saved=$(printf '%s\n\n---\n\n%s\n' "$report" "$tail" | sh "$pdir/../../scripts/write-report.sh" docs-drift)
+      printf '%s\n' "$head" > "$state"
+      printf '%s' "$saved" | jq --arg b "$branch" '. + {branch: $b}'
+    outputs:
+      report: string
+      headline: string
+      branch: string
+
+  # No code change since the last review: the agent didn't run. Say so, so the
+  # notification doesn't repeat last week's headline.
+  - id: unchanged
+    type: shell
+    when: "{{prepare.changed}} == false"
+    run: |
+      set -euo pipefail
+      repo="{{prepare.repo}}"
+      head="{{prepare.head}}"
+      branch="{{prepare.branch}}"
+      printf '# docs-drift: no code changes in %s since the last review\n\nStill at `%.12s` on `%s`, already reviewed. The agent did not run (no cost). Earlier reports are in this folder, one per date.\n' "$repo" "$head" "$branch" \
+        | sh ../../scripts/write-report.sh docs-drift
+    outputs:
+      report: string
+      headline: string

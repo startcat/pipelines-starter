@@ -1,0 +1,154 @@
+name: weekly-briefing
+description: Every Friday afternoon, an agent turns the week's activity in your GitHub repos (merged pull requests, issues, releases) into a short plain-language briefing for a non-technical reader.
+version: 1
+
+params:
+  repos:
+    description: Space-separated GitHub repositories as owner/name, e.g. "acme/api acme/web".
+    required: true
+  days:
+    description: How many days back to look. 7 covers the week since last Friday's run.
+    default: 7
+  audience:
+    description: Who reads the briefing. The agent adapts tone and detail to them, e.g. "the sales team" or "our client, the product owner at Acme".
+    default: a non-technical manager
+  language:
+    description: Language the briefing is written in, e.g. "Spanish".
+    default: English
+  include_releases:
+    description: Also read the notes of releases published in the window ("true" or "false").
+    default: true
+  workdir:
+    description: The agent's workspace, where the collected data is written. Empty means "$HOME/Library/Application Support/pipelines/workspaces/weekly-briefing".
+    default: ""
+
+requires:
+  agents: [briefing-writer]
+  bin: [curl, jq]
+  env: [GITHUB_TOKEN]
+  net: [api.github.com]
+
+triggers:
+  - cron: "0 16 * * 5"
+
+notify:
+  on: [success, failed]
+  stale_after: 192h
+  channel: macos
+
+steps:
+  # Collects the week's activity with the GitHub REST API and writes one
+  # Markdown file per repo (plus overview.md) into the agent's workspace.
+  - id: collect
+    type: shell
+    timeout: 5m
+    run: |
+      set -euo pipefail
+      days="{{params.days}}"
+      case "$days" in ''|*[!0-9]*) echo "days must be a whole number, got: $days" >&2; exit 1 ;; esac
+      dir="{{params.workdir}}"
+      [ -n "$dir" ] || dir="$HOME/Library/Application Support/pipelines/workspaces/weekly-briefing"
+      mkdir -p "$dir"
+      rm -f "$dir"/*.md
+      json=$(mktemp -t weekly-briefing)
+      trap 'rm -f "$json"' EXIT
+      since=$(date -u -v-"${days}"d +%Y-%m-%dT%H:%M:%SZ)
+      since_day=$(LC_ALL=C date -v-"${days}"d '+%a %d %b %Y')
+      today=$(LC_ALL=C date '+%a %d %b %Y')
+      week=$(date +%V | sed -E 's/^0//')
+      api() {
+        curl -fsS --max-time 30 -G \
+          -H "Authorization: Bearer $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" "$@"
+      }
+      search() {
+        api "https://api.github.com/search/issues" --data-urlencode "q=$1" -d per_page=100 -d sort=created -d order=desc
+      }
+      total=0; summary=""
+      overview="# Activity from $since_day to $today (last $days days)
+      "
+      for repo in {{params.repos}}; do
+        case "$repo" in */*) ;; *) echo "repos must be owner/name, got: $repo" >&2; exit 1 ;; esac
+        echo "collecting $repo since $since" >&2
+        prs=$(search "repo:$repo is:pr is:merged merged:>=$since" | jq '{total: .total_count, items: [.items[] | {number, title, url: .html_url, author: .user.login, labels: [.labels[].name], merged_at: .pull_request.merged_at, body: ((.body // "") | gsub("<!--.*?-->"; ""; "s") | gsub("[[:space:]]+"; " ") | .[0:300])}]}')
+        opened=$(search "repo:$repo is:issue created:>=$since" | jq '{total: .total_count, items: [.items[] | {number, title, url: .html_url, author: .user.login, labels: [.labels[].name], state, comments, body: ((.body // "") | gsub("<!--.*?-->"; ""; "s") | gsub("[[:space:]]+"; " ") | .[0:150])}]}')
+        closed=$(search "repo:$repo is:issue is:closed closed:>=$since" | jq '{total: .total_count, items: [.items[] | {number, title, url: .html_url, labels: [.labels[].name], state_reason, comments}]}')
+        if [ "{{params.include_releases}}" = "true" ]; then
+          releases=$(api "https://api.github.com/repos/$repo/releases" -d per_page=20 | jq --arg s "$since" '[.[] | select(.draft | not) | select((.published_at // "") >= $s) | {name: (.name // .tag_name), tag: .tag_name, url: .html_url, published_at, prerelease, notes: ((.body // "") | .[0:3000])}]')
+        else
+          releases='[]'
+        fi
+        md="$dir/$(printf '%s' "$repo" | tr '/' '_').md"
+        jq -n --arg repo "$repo" --arg since "$since" --argjson prs "$prs" --argjson opened "$opened" --argjson closed "$closed" --argjson releases "$releases" \
+          '{repo: $repo, since: $since, merged_pull_requests: $prs, issues_opened: $opened, issues_closed: $closed, releases: $releases}' > "$json"
+        jq -r '
+          def item: "- [#\(.number)](\(.url)) \(.title)" + (if (.labels | length) > 0 then " [labels: \(.labels | join(", "))]" else "" end);
+          "# \(.repo): activity since \(.since)\n",
+          "## Merged pull requests (\(.merged_pull_requests.total) in total)\n",
+          (.merged_pull_requests.items[] | item + " (by \(.author))" + (if .body != "" then "\n  > \(.body)" else "" end)),
+          "\n## Issues opened (\(.issues_opened.total) in total)\n",
+          (.issues_opened.items[] | item + " (\(.state), \(.comments) comments)" + (if .body != "" then "\n  > \(.body)" else "" end)),
+          "\n## Issues closed (\(.issues_closed.total) in total)\n",
+          (.issues_closed.items[] | item + " (\(if .state_reason == "not_planned" then "closed as not planned" else "resolved" end))"),
+          "\n## Releases (\(.releases | length))\n",
+          (.releases[] | "### [\(.name)](\(.url))\(if .prerelease then " (pre-release)" else "" end), published \(.published_at)\n\n\(.notes)\n")
+        ' "$json" > "$md"
+        n_prs=$(jq '.merged_pull_requests.total' "$json")
+        n_open=$(jq '.issues_opened.total' "$json")
+        n_closed=$(jq '.issues_closed.total' "$json")
+        n_rel=$(jq '.releases | length' "$json")
+        n=$((n_prs + n_open + n_closed + n_rel))
+        total=$((total + n))
+        line="$repo: $n_prs merged pull requests, $n_open issues opened, $n_closed issues closed, $n_rel releases"
+        echo "$line" >&2
+        summary="$summary$line; "
+        overview="$overview
+      - $line (details: $(basename "$md"))"
+      done
+      overview="$overview
+      
+      Lists hold at most 100 items each; \`total\` is the real count. Bodies are truncated."
+      printf '%s\n' "$overview" > "$dir/overview.md"
+      quiet=$(printf '# Week %s: no activity in %s\n\nNothing merged, opened, closed or released from %s to %s.' "$week" "{{params.repos}}" "$since_day" "$today")
+      jq -n --arg w "$dir" --argjson t "$total" --arg wk "$week" --arg p "$since_day to $today" --arg s "${summary%; }" --arg q "$quiet" \
+        '{workdir: $w, total: $t, week: $wk, period: $p, summary: $s, quiet_report: $q}'
+    outputs:
+      workdir: string
+      total: number
+      week: string
+      period: string
+      summary: string
+      quiet_report: string
+
+  # Skipped when nothing happened: no agent, no cost.
+  - id: write
+    agent: briefing-writer
+    prompt: steps/write.md
+    cwd: "{{collect.workdir}}"
+    when: "{{collect.total}} > 0"
+    tools: [Read, Glob, Grep]
+    max_cost_usd: 0.5
+    timeout: 10m
+    outputs:
+      report: string
+
+  - id: save
+    type: shell
+    when: "{{collect.total}} > 0"
+    run: |
+      set -euo pipefail
+      printf '%s\n' "{{write.report}}" | sh ../../scripts/write-report.sh weekly-briefing
+    outputs:
+      report: string
+      headline: string
+
+  - id: save-quiet
+    type: shell
+    when: "{{collect.total}} == 0"
+    run: |
+      set -euo pipefail
+      printf '%s\n' "{{collect.quiet_report}}" | sh ../../scripts/write-report.sh weekly-briefing
+    outputs:
+      report: string
+      headline: string

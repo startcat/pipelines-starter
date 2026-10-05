@@ -1,0 +1,161 @@
+name: news-digest
+description: Reads your RSS/Atom feeds (blogs, YouTube channels, Hacker News...) every morning and has an agent write a digest of what's new, grouped by topic, with content ideas for your own audience.
+version: 1
+
+params:
+  feeds:
+    description: >-
+      Space-separated list of RSS or Atom feed URLs. For a YouTube channel use
+      https://www.youtube.com/feeds/videos.xml?channel_id=<ID>.
+    required: true
+  topics:
+    description: What you care about, in plain words. Items unrelated to it are left out of the digest (but counted).
+    default: software development and AI
+  ideas_for:
+    description: Who the content ideas are for (your blog, newsletter, channel...).
+    default: a small software studio's blog
+  language:
+    description: Language the digest is written in.
+    default: English
+  max_items:
+    description: Maximum number of new items handed to the agent per run (the newest ones win).
+    default: 40
+  workdir:
+    description: >-
+      Workspace for the fetched items and the state file (what has already been
+      digested). Empty means $HOME/Library/Application Support/pipelines/workspaces/news-digest.
+    default: ""
+
+requires:
+  agents: [news-editor]
+  bin: [curl, xsltproc, xmllint, jq]
+
+triggers:
+  - cron: "0 7 * * *"
+
+notify:
+  on: [success, failed]
+  stale_after: 50h
+  channel: macos
+
+steps:
+  # Downloads every feed, keeps the items newer than the last digested one
+  # (per feed; first run: last 48 h) and writes them to <workdir>/items.json.
+  # A feed that fails is reported, not fatal; the run fails only if ALL fail.
+  - id: fetch
+    type: shell
+    timeout: 10m
+    run: |
+      set -euo pipefail
+      dir="{{params.workdir}}"
+      [ -n "$dir" ] || dir="$HOME/Library/Application Support/pipelines/workspaces/news-digest"
+      mkdir -p "$dir"
+      max="{{params.max_items}}"
+      state="$dir/state.json"
+      [ -s "$state" ] || echo '{}' > "$state"
+      first_since=$(( $(date +%s) - 48 * 3600 ))
+      tmp=$(mktemp -d)
+      trap 'rm -rf "$tmp"' EXIT
+      ua="news-digest/1 (agentic-pipelines; +https://github.com/startcat/agentic-pipelines)"
+      : > "$tmp/feeds.jsonl"
+      : > "$tmp/failed.jsonl"
+      set -f # feed URLs contain '?': no globbing while splitting the list
+      for url in {{params.feeds}}; do
+        since=$(jq -r --arg u "$url" --argjson d "$first_since" '.[$u] // $d' "$state")
+        err=""
+        if ! curl -sSfL --compressed --connect-timeout 10 --max-time 30 --retry 1 -A "$ua" -o "$tmp/feed.xml" "$url" 2>"$tmp/err"; then
+          err=$(tail -n 1 "$tmp/err" | sed -E 's/^curl: \([0-9]+\) //')
+        else
+          root=$(xmllint --nonet --xpath 'local-name(/*)' "$tmp/feed.xml" 2>/dev/null || true)
+          case "$root" in
+            rss|feed|RDF)
+              if ! xsltproc --nonet feed.xsl "$tmp/feed.xml" > "$tmp/feed.tsv" 2>"$tmp/err"; then
+                err="could not parse the feed"
+              fi ;;
+            *) err="not an RSS or Atom feed" ;;
+          esac
+        fi
+        if [ -n "$err" ]; then
+          echo "FAILED $url: $err" >&2
+          jq -nc --arg u "$url" --arg e "$err" '{url: $u, error: $e}' >> "$tmp/failed.jsonl"
+          continue
+        fi
+        jq -R -s -c --arg url "$url" --argjson since "$since" -f feed.jq "$tmp/feed.tsv" >> "$tmp/feeds.jsonl"
+        jq -r '"ok     \(.source): \(.total) items, \(.items | length) new"' "$tmp/feeds.jsonl" | tail -n 1 >&2
+      done
+      set +f
+      jq -s '.' "$tmp/feeds.jsonl" > "$tmp/feeds.json"
+      jq -s '.' "$tmp/failed.jsonl" > "$tmp/failed.json"
+      # items.json: the newest max_items new items, without the internal epoch field.
+      jq --argjson max "$max" '[.[].items[]] | sort_by(-.epoch) | .[0:$max] | map(del(.epoch))' "$tmp/feeds.json" > "$dir/items.json"
+      # The state to apply once the digest is saved (save/quiet steps).
+      jq --slurpfile f "$tmp/feeds.json" 'reduce $f[0][] as $x (.; .[$x.url] = $x.newest)' "$state" > "$dir/state.next.json"
+      ok=$(jq 'length' "$tmp/feeds.json")
+      nfailed=$(jq 'length' "$tmp/failed.json")
+      fetched=$(jq '[.[].total] | add // 0' "$tmp/feeds.json")
+      new=$(jq '[.[].items | length] | add // 0' "$tmp/feeds.json")
+      shown=$(jq 'length' "$dir/items.json")
+      echo "$ok feed(s) ok, $nfailed failed, $fetched items fetched, $new new, $shown kept" >&2
+      if [ "$ok" -eq 0 ]; then
+        echo "Every feed failed: $(jq -r 'map("\(.url) (\(.error))") | join(", ")' "$tmp/failed.json")" >&2
+        exit 1
+      fi
+      footer="Sources: $ok feed(s) read, $fetched items, $new new since the last digest"
+      if [ "$shown" -lt "$new" ]; then footer="$footer (the $shown newest kept, max_items)"; fi
+      footer="$footer."
+      if [ "$nfailed" -gt 0 ]; then
+        footer="$footer Failed: $(jq -r 'map("\(.url) (\(.error))") | join(", ")' "$tmp/failed.json")."
+      fi
+      jq -n --arg w "$dir" --argjson n "$new" --argjson s "$shown" --argjson f "$nfailed" --arg foot "$footer" \
+        '{workdir: $w, new_items: $n, shown: $s, failed: $f, footer: $foot}'
+    outputs:
+      workdir: string
+      new_items: number
+      shown: number
+      failed: number
+      footer: string
+
+  # Nothing new: no agent, just a one-line report. If a digest was already
+  # written today (e.g. a manual re-run), it is kept instead of overwritten.
+  - id: quiet
+    type: shell
+    when: "{{fetch.new_items}} == 0"
+    run: |
+      set -euo pipefail
+      dir="{{fetch.workdir}}"
+      today="../../reports/news-digest/$(date +%Y-%m-%d).md"
+      if [ -f "$today" ] && ! head -n 1 "$today" | grep -q '^# No new items'; then
+        echo "nothing new; keeping today's digest $today" >&2
+        out=$(jq -n --arg r "$(cd "$(dirname "$today")" && pwd)/$(basename "$today")" --arg h "$(head -n 1 "$today" | sed 's/^#* *//')" '{report: $r, headline: $h}')
+      else
+        out=$(printf '# No new items since the last digest\n\n%s\n' "{{fetch.footer}}" | sh ../../scripts/write-report.sh news-digest)
+      fi
+      mv "$dir/state.next.json" "$dir/state.json"
+      printf '%s\n' "$out"
+    outputs:
+      report: string
+      headline: string
+
+  - id: digest
+    agent: news-editor
+    prompt: steps/digest.md
+    cwd: "{{fetch.workdir}}"
+    when: "{{fetch.new_items}} > 0"
+    tools: [Read, Glob]
+    max_cost_usd: 0.5
+    timeout: 10m
+    outputs:
+      report: string
+
+  # Saves the digest, then marks its items as digested (never before the report exists).
+  - id: save
+    type: shell
+    run: |
+      set -euo pipefail
+      dir="{{fetch.workdir}}"
+      out=$(printf '%s\n\n---\n\n%s\n' "{{digest.report}}" "{{fetch.footer}}" | sh ../../scripts/write-report.sh news-digest)
+      mv "$dir/state.next.json" "$dir/state.json"
+      printf '%s\n' "$out"
+    outputs:
+      report: string
+      headline: string

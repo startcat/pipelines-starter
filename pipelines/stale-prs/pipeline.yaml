@@ -1,0 +1,175 @@
+name: stale-prs
+description: Lists open pull requests that nobody has touched in N days, across one or more GitHub repos, every weekday morning, and alerts only when there are some.
+version: 1
+
+params:
+  repos:
+    description: Space-separated list of GitHub repos as owner/name, e.g. "my-org/api my-org/web".
+    required: true
+  stale_days:
+    description: A pull request is stale when it hasn't been updated (commits, comments, reviews, labels) for at least this many days.
+    default: 5
+  include_drafts:
+    description: Set to "false" to leave draft pull requests out of the report and the alert.
+    default: true
+  max_rows:
+    description: Maximum number of stale pull requests listed per repo (the stalest first); the rest are counted.
+    default: 30
+
+requires:
+  bin: [curl, jq]
+  env: [GITHUB_TOKEN]
+  net: [api.github.com]
+
+triggers:
+  - cron: "0 9 * * 1,2,3,4,5"
+
+notify:
+  on: [failed]
+  stale_after: 98h
+  channel: macos
+
+steps:
+  - id: check
+    type: shell
+    timeout: 5m
+    run: |
+      set -euo pipefail
+      stale_days="{{params.stale_days}}"
+      include_drafts="{{params.include_drafts}}"
+      max_rows="{{params.max_rows}}"
+      tmp=$(mktemp -d)
+      trap 'rm -rf "$tmp"' EXIT
+      cutoff=$(( $(date +%s) - stale_days * 86400 ))
+
+      # GET a GitHub API URL into $tmp/body; prints the HTTP status code.
+      gh_get() {
+        curl -sS -o "$tmp/body" -w '%{http_code}' --max-time 30 \
+          -H "Authorization: Bearer $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" "$1" 2>/dev/null || echo 000
+      }
+
+      total=0
+      errors=0
+      sections=""
+      for repo in {{params.repos}}; do
+        echo "checking $repo" >&2
+        echo '[]' > "$tmp/stale.json"
+        page=1
+        err=""
+        more=0
+        # Oldest-updated first: stop paging as soon as a page reaches non-stale PRs.
+        while [ "$page" -le 5 ]; do
+          code=$(gh_get "https://api.github.com/repos/$repo/pulls?state=open&sort=updated&direction=asc&per_page=100&page=$page")
+          if [ "$code" != "200" ]; then
+            err="GitHub API answered HTTP $code ($(jq -r '.message? // empty' "$tmp/body" 2>/dev/null || true))"
+            break
+          fi
+          jq --argjson cutoff "$cutoff" '[.[] | select((.updated_at | fromdateiso8601) <= $cutoff)]' "$tmp/body" > "$tmp/page.json"
+          jq -s 'add' "$tmp/stale.json" "$tmp/page.json" > "$tmp/merged.json" && mv "$tmp/merged.json" "$tmp/stale.json"
+          n_page=$(jq 'length' "$tmp/body")
+          n_stale=$(jq 'length' "$tmp/page.json")
+          if [ "$n_page" -lt 100 ] || [ "$n_stale" -lt "$n_page" ]; then break; fi
+          page=$((page + 1))
+          [ "$page" -le 5 ] || more=1
+        done
+
+        if [ -n "$err" ]; then
+          errors=$((errors + 1))
+          sections="$sections## [$repo](https://github.com/$repo)
+
+      Could not read pull requests: $err.
+
+      "
+          continue
+        fi
+
+        if [ "$include_drafts" = "false" ]; then
+          jq '[.[] | select(.draft | not)]' "$tmp/stale.json" > "$tmp/f.json" && mv "$tmp/f.json" "$tmp/stale.json"
+        fi
+        count=$(jq 'length' "$tmp/stale.json")
+        total=$((total + count))
+        if [ "$count" -eq 0 ]; then
+          sections="$sections## [$repo](https://github.com/$repo)
+
+      No stale pull requests.
+
+      "
+          continue
+        fi
+
+        # Review state, only for the rows we show: one cheap call per PR.
+        rows=""
+        for num in $(jq -r --argjson m "$max_rows" '.[:$m][] | .number' "$tmp/stale.json"); do
+          code=$(gh_get "https://api.github.com/repos/$repo/pulls/$num/reviews?per_page=100")
+          if [ "$code" = "200" ]; then
+            review=$(jq -r '
+              [.[] | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")]
+              | group_by(.user.login) | map(max_by(.submitted_at).state) as $s
+              | if ($s | index("CHANGES_REQUESTED")) then "changes requested"
+                elif ($s | index("APPROVED")) then "approved"
+                elif length > 0 then "reviewed" else "" end' "$tmp/body")
+            [ -n "$review" ] || review=$(jq -r 'if length > 0 then "commented" else "" end' "$tmp/body")
+          else
+            review="?"
+          fi
+          row=$(jq -r --argjson n "$num" --arg review "$review" '
+            .[] | select(.number == $n)
+            | ((now - (.updated_at | fromdateiso8601)) / 86400 | floor) as $idle
+            | ([.requested_reviewers[]?.login] + [.requested_teams[]?.slug]) as $req
+            | (if $review != "" then $review
+               elif ($req | length) > 0 then "waiting for " + ($req | map("@" + .) | join(", "))
+               else "no reviewer" end) as $rs
+            | (.title | gsub("\\|"; "\\|") | gsub("[\\[\\]]"; "")) as $t
+            | "| [#\(.number) \($t)](\(.html_url)) | @\(.user.login) | \($idle) | \(if .draft then "draft" else "" end) | \($rs) |"' "$tmp/stale.json")
+          rows="$rows$row
+      "
+        done
+        extra=""
+        if [ "$count" -gt "$max_rows" ]; then extra="
+      …and $((count - max_rows)) more."; fi
+        if [ "$more" -eq 1 ]; then extra="$extra
+      Only the 500 stalest open pull requests were scanned."; fi
+        sections="$sections## [$repo](https://github.com/$repo): $count stale
+
+      | Pull request | Author | Days idle | Draft | Review |
+      |---|---|---|---|---|
+      $rows$extra
+
+      "
+      done
+
+      if [ "$errors" -gt 0 ] && [ "$total" -eq 0 ]; then title="Could not check $errors repo(s)"
+      elif [ "$total" -eq 0 ]; then title="No stale pull requests"
+      elif [ "$total" -eq 1 ]; then title="1 pull request idle for $stale_days+ days"
+      else title="$total pull requests idle for $stale_days+ days"; fi
+      if [ "$errors" -gt 0 ] && [ "$total" -gt 0 ]; then title="$title ($errors repo(s) could not be checked)"; fi
+      report=$(printf '# %s\n\n%s · stale = no update for %s days or more\n\n%s' "$title" "$(date '+%Y-%m-%d %H:%M')" "$stale_days" "$sections")
+      jq -n --arg r "$report" --argjson s "$total" --argjson e "$errors" '{stale: $s, errors: $e, report: $r}'
+    outputs:
+      stale: number
+      errors: number
+      report: string
+
+  - id: save
+    type: shell
+    run: |
+      set -euo pipefail
+      printf '%s\n' "{{check.report}}" | sh ../../scripts/write-report.sh stale-prs
+    outputs:
+      report: string
+      headline: string
+
+  # The red run is the alert: notify.on [failed] fires only when there are stale PRs
+  # (or a repo could not be read).
+  - id: verdict
+    type: shell
+    inputs: [save.report]
+    run: |
+      set -euo pipefail
+      if [ "{{check.stale}}" -gt 0 ] || [ "{{check.errors}}" -gt 0 ]; then
+        echo "{{save.headline}}. Details: {{save.report}}" >&2
+        exit 1
+      fi
+      echo "no stale pull requests" >&2
