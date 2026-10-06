@@ -71,7 +71,7 @@ Walk through how a studio would implement Simon Willison's proposed "default har
 Sources: 4 feed(s) read, 80 items, 24 new since the last digest. Failed: https://example.invalid/feed.xml (Could not resolve host: example.invalid).
 ```
 
-A feed that fails (down, moved, not a feed) is listed at the bottom and the rest still runs; the run only fails if every feed fails. When nothing is new, the report is one line (`# No new items since the last digest`) and no agent runs. If the pipeline stops running for two days, you get a notification too (`stale_after: 50h`).
+Each feed is tried up to three times, five seconds apart, because YouTube feeds sometimes answer 404 for a moment. A feed that still fails (down, moved, not a feed) is listed at the bottom and the rest still runs; the run only fails if every feed fails. When nothing is new, the report is one line (`# No new items since the last digest`) and no agent runs. If the pipeline stops running for two days, you get a notification too (`stale_after: 50h`).
 
 ## Notifications
 
