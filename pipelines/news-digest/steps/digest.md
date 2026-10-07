@@ -5,20 +5,22 @@ digest, each with `source`, `title`, `link`, `published` (UTC) and `summary`
 
 The reader cares about: **{{params.topics}}**.
 
-Write the digest in **{{params.language}}** and return it as the `report`
-field: Markdown, with this structure.
+Write the whole digest in **{{params.language}}**, headings and labels
+included, and return it as the `report` field: Markdown, with this structure.
 
-1. First line, the headline: `# <N> new items · <M> worth a look`, where N is
-   {{fetch.shown}} and M is how many items are related to the reader's
-   interests (translate the wording into {{params.language}}, keep the numbers).
+1. First line, the headline: `# {{fetch.shown}} X · M Y`, nothing else, where
+   X means "new items" and Y means "worth a look", both in {{params.language}},
+   and M is how many items are related to the reader's interests.
 2. One sentence with the gist of the day, if there is one.
 3. One `##` section per topic you find among the relevant items (2 to 6
    topics, named by you, most important first). Under each, one bullet per
    item: `- [Title](link): one-line summary · Source`. Merge items that cover
    the same story into one bullet with all their links.
-4. `## Content ideas`: exactly 3 concrete ideas for **{{params.ideas_for}}**.
-   For each: a working title in bold, two sentences on the angle and why this
-   audience would care, and "Builds on:" followed by the linked items it uses.
+4. A `##` section of content ideas, with its heading in {{params.language}}:
+   exactly 3 concrete ideas for **{{params.ideas_for}}**. For each: a working
+   title in bold, two sentences on the angle and why this audience would care,
+   and the linked items it uses, introduced by a short label in
+   {{params.language}} that means "builds on".
    Ideas must be grounded in the items, not generic.
 5. A last line in italics: how many items were skipped as unrelated to the
    reader's interests, with 3 to 5 of their titles as examples (no links
