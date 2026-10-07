@@ -32,3 +32,8 @@ summary only has links, points and comment counts: judge those items by their
 title, keep their one-liner to what the title says (without adding "per the
 title"), and don't make up what the article says. In the content ideas you may
 connect items, but don't attribute to an item anything it doesn't say.
+
+Also return a `footer` field: this line in {{params.language}}, with every
+number and URL exactly as it is.
+
+{{fetch.footer}}

@@ -153,6 +153,7 @@ steps:
     timeout: 10m
     outputs:
       report: string
+      footer: string # fetch.footer, in params.language
 
   # Saves the digest, then marks its items as digested (never before the report exists).
   - id: save
@@ -160,7 +161,7 @@ steps:
     run: |
       set -euo pipefail
       dir="{{fetch.workdir}}"
-      out=$(printf '%s\n\n---\n\n%s\n' "{{digest.report}}" "{{fetch.footer}}" | sh ../../scripts/write-report.sh news-digest)
+      out=$(printf '%s\n\n---\n\n%s\n' "{{digest.report}}" "{{digest.footer}}" | sh ../../scripts/write-report.sh news-digest)
       mv "$dir/state.next.json" "$dir/state.json"
       printf '%s\n' "$out"
     outputs:
