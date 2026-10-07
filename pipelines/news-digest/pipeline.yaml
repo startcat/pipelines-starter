@@ -31,7 +31,10 @@ requires:
   bin: [curl, xsltproc, xmllint, jq]
 
 triggers:
-  - cron: "0 7 * * *"
+  # 10:00, not earlier: on most days YouTube's feeds answer 404 for every
+  # channel for a few hours until midnight Pacific time, which is the early
+  # morning in Europe. Retrying a few seconds later doesn't help.
+  - cron: "0 10 * * *"
 
 notify:
   on: [success, failed]
@@ -66,6 +69,9 @@ steps:
         # YouTube feeds sometimes answer 404 for a moment: retry any error, not just 5xx.
         if ! curl -sSfL --compressed --connect-timeout 10 --max-time 30 --retry 2 --retry-delay 5 --retry-all-errors -A "$ua" -o "$tmp/feed.xml" "$url" 2>"$tmp/err"; then
           err=$(tail -n 1 "$tmp/err" | sed -E 's/^curl: \([0-9]+\) //')
+          case "$url $err" in
+            *youtube.com/feeds/*"returned error"*) err="$err (YouTube's feeds are often down for a few hours until midnight Pacific time; see the news-digest README)" ;;
+          esac
         else
           root=$(xmllint --nonet --xpath 'local-name(/*)' "$tmp/feed.xml" 2>/dev/null || true)
           case "$root" in

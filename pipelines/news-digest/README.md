@@ -18,7 +18,7 @@ pipelines doctor news-digest
 pipelines install news-digest --set feeds="https://simonwillison.net/atom/everything/ https://hnrss.org/frontpage"
 ```
 
-That's it: from tomorrow it runs every day at 07:00. To try it right now:
+That's it: from tomorrow it runs every day at 10:00 (not earlier, because of YouTube; see below). To try it right now:
 
 ```bash
 pipelines run news-digest --set feeds="https://simonwillison.net/atom/everything/ https://hnrss.org/frontpage"
@@ -31,6 +31,8 @@ The first run covers the last 48 hours; after that, each run only shows what was
 ```bash
 curl -sL https://www.youtube.com/@anthropic-ai | grep -oE '"externalId":"UC[^"]+"'
 ```
+
+On most days, YouTube's feeds answer 404 for every channel for a few hours until midnight Pacific time, which is the early morning in Europe. A 404 then doesn't mean the channel ID is wrong, and retrying a few seconds later doesn't help. That's why the schedule is 10:00; if you change it, or you're in a time zone where 10:00 falls in that window, pick an hour after midnight Pacific. A feed that fails one day is caught up by the next run that reads it.
 
 ## Configure
 
