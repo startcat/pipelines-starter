@@ -66,10 +66,11 @@ All of these are gitignored.
 
 ## Notifications
 
-Each pipeline declares when it notifies (`notify.on`) and through which channel (`notify.channel`). Two channels are included in [`pipelines.yaml`](pipelines.yaml):
+Each pipeline declares when it notifies (`notify.on`) and through which channel (`notify.channel`). Three channels are included in [`pipelines.yaml`](pipelines.yaml):
 
-- **`macos`** (default): a macOS notification with the first line of the report. Works with no setup. The first time, macOS may ask you to allow notifications for Script Editor.
-- **`ntfy`**: a push notification on your phone with the full report, through [ntfy.sh](https://ntfy.sh). Install the ntfy app, subscribe to a long, hard-to-guess topic name, put it in `.env` as `NTFY_TOPIC=...`, and change `channel: macos` to `channel: ntfy` in the pipelines you want on your phone.
+- **`default`** (what every pipeline uses): a macOS notification on a Mac, and a push through ntfy on any other machine. On a Mac it works with no setup (the first time, macOS may ask you to allow notifications for Script Editor). Elsewhere it needs `NTFY_TOPIC` in `.env`; without it, the notification fails and says so.
+- **`macos`**: always a macOS notification with the first line of the report.
+- **`ntfy`**: a push notification on your phone with the full report, through [ntfy.sh](https://ntfy.sh). Install the ntfy app, subscribe to a long, hard-to-guess topic name, put it in `.env` as `NTFY_TOPIC=...`, and change `channel: default` to `channel: ntfy` in the pipelines you want on your phone (also from a Mac).
 
 Alert-style pipelines (site-checks, stale-prs, issues-already-fixed, dev-machine-doctor) only notify when there is something to look at. Digest-style ones (weekly-briefing, docs-drift, news-digest) notify every time they produce a report. All of them warn you if they stop running (`stale_after`).
 

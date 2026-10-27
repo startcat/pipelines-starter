@@ -70,7 +70,7 @@ When nothing happened in any of the repos, the agent doesn't run and the report 
 
 ## Notifications
 
-Digest-style: you get a notification after every run, with the headline as the message, and also when a run fails (for example, an expired token). If it hasn't run successfully for eight days, you get a notification too (`stale_after: 192h`). By default it's a macOS notification (`notify.channel: macos`); to get it on your phone, set `NTFY_TOPIC` in `.env` and change the channel to `ntfy` in [`pipeline.yaml`](pipeline.yaml). See the [main README](../../README.md#notifications).
+Digest-style: you get a notification after every run, with the headline as the message, and also when a run fails (for example, an expired token). If it hasn't run successfully for eight days, you get a notification too (`stale_after: 192h`). By default it's a macOS notification (`notify.channel: default`); to get it on your phone, set `NTFY_TOPIC` in `.env` and change the channel to `ntfy` in [`pipeline.yaml`](pipeline.yaml). See the [main README](../../README.md#notifications).
 
 ## Safety
 

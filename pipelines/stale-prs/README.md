@@ -67,7 +67,7 @@ When there is at least one stale pull request (or a repo can't be read), the run
 
 ## Notifications
 
-By default, a macOS notification (`notify.channel: macos`). To get it on your phone instead, set `NTFY_TOPIC` in `.env` and change the channel to `ntfy` in [`pipeline.yaml`](pipeline.yaml). See the [main README](../../README.md#notifications).
+By default (`notify.channel: default`), a macOS notification on a Mac (ntfy elsewhere). To get it on your phone instead, set `NTFY_TOPIC` in `.env` and change the channel to `ntfy` in [`pipeline.yaml`](pipeline.yaml). See the [main README](../../README.md#notifications).
 
 ## Safety
 

@@ -22,7 +22,7 @@ triggers:
 notify:
   on: [failed]
   stale_after: 50h
-  channel: macos
+  channel: default
 
 steps:
   - id: check
