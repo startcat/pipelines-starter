@@ -52,11 +52,15 @@ steps:
             host=$(printf '%s' "$url" | sed -E 's#^https://([^/:]+).*#\1#')
             end=$(echo | openssl s_client -servername "$host" -connect "$host:443" 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2 || true)
             if [ -n "$end" ]; then
-              exp=$(date -j -f "%b %e %T %Y %Z" "$end" +%s 2>/dev/null || echo "")
+              # BSD date (macOS) first, GNU date (Linux) as the fallback.
+              exp=$(LC_ALL=C date -j -f "%b %e %T %Y %Z" "$end" +%s 2>/dev/null || LC_ALL=C date -d "$end" +%s 2>/dev/null || echo "")
               if [ -n "$exp" ]; then
                 days=$(( (exp - now) / 86400 ))
                 if [ "$days" -lt 0 ]; then note="certificate expired"
                 elif [ -z "$note" ] && [ "$days" -lt "$warn_days" ]; then note="certificate expires in $days days"; fi
+              else
+                days="?"
+                if [ -z "$note" ]; then note="certificate expiry unreadable ($end)"; fi
               fi
             fi
             ;;
