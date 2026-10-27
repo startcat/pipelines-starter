@@ -20,19 +20,21 @@ Every pipeline is **read-only by default**: nothing pushes, merges, closes or de
 
 **1. Install the engine** (needs macOS, or Linux with systemd; plus [Bun](https://bun.sh), `git` and `jq`; the pipelines with an agent also need an [Anthropic API key](https://platform.claude.com/)):
 
+**On Linux** (a server or a desktop with systemd), first, once:
+
+```bash
+sudo apt install unzip git jq                       # unzip is needed by the Bun installer
+curl -fsSL https://bun.sh/install | bash            # then open a new shell, or: source ~/.bashrc (~/.zshrc if you use zsh)
+sudo loginctl enable-linger $USER                   # without it, timers don't fire when you are logged out
+sudo timedatectl set-timezone Europe/Madrid         # set your timezone (e.g. this one); schedules are read in the machine's local time
+```
+
+Then, on any system:
+
 ```bash
 git clone https://github.com/startcat/agentic-pipelines.git ~/agentic-pipelines
 cd ~/agentic-pipelines && bun install
 alias pipelines="bun run ~/agentic-pipelines/src/cli/index.ts"   # add this line to your ~/.zshrc (or ~/.bashrc on Linux)
-```
-
-**On Linux** (a server or a desktop with systemd), a few things to do first, once:
-
-```bash
-sudo apt install unzip git jq                       # unzip is needed by the Bun installer
-curl -fsSL https://bun.sh/install | bash            # then open a new shell, or: source ~/.bashrc
-sudo loginctl enable-linger $USER                   # without it, timers don't fire when you are logged out
-sudo timedatectl set-timezone Europe/Madrid         # schedules are read in the machine's local time
 ```
 
 - Pipelines are scheduled as systemd **user timers**. `pipelines install` refuses to install if linger is off, unless you pass `--force`.
