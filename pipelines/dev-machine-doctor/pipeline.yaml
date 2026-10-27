@@ -41,8 +41,10 @@ steps:
       os=$(uname -s)
 
       # 1. Free disk on /. On a Mac (APFS), "Available" doesn't count purgeable space.
-      free_kb=$(df -k / | awk 'NR == 2 { print $4 }')
-      size_kb=$(df -k / | awk 'NR == 2 { print $2 }')
+      df_flags=-k
+      [ "$os" = "Darwin" ] || df_flags=-Pk
+      free_kb=$(df $df_flags / | awk 'NR == 2 { print $4 }')
+      size_kb=$(df $df_flags / | awk 'NR == 2 { print $2 }')
       free_gb=$(( free_kb / 1048576 ))
       low_disk=0
       [ "$free_gb" -ge "$min_free_gb" ] || low_disk=1
@@ -141,7 +143,7 @@ steps:
         docker_md="Docker is not installed (or not on the usual paths): skipped."
       elif timed_out docker; then
         docker_md="Docker is installed but \`docker system df\` didn't answer in time (daemon starting or stuck): skipped."
-      elif grep -qi 'permission denied' "$tmp/docker.err" 2>/dev/null; then
+      elif [ "$os" != "Darwin" ] && grep -qi 'permission denied' "$tmp/docker.err" 2>/dev/null; then
         docker_md="Docker is installed but this user can't reach the daemon (not in the docker group?): skipped."
       elif [ -s "$tmp/docker.out" ]; then
         docker_md=$(printf '```\n%s\n```\n\nTo reclaim it, by hand: `docker system prune` (stopped containers, unused networks, dangling images and build cache). `docker system prune -a --volumes` frees more but also deletes every unused image and volume.' "$(cat "$tmp/docker.out")")
