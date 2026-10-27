@@ -70,7 +70,7 @@ None.
 What it looks at:
 
 - **Disk:** the space available on `/`. On a Mac (APFS) this doesn't count purgeable space, so Finder may show a bit more.
-- **Caches:** only the ones that exist, out of your user's app caches folder (`~/Library/Caches` on a Mac, plus its 8 biggest app folders), Xcode's `DerivedData` (Mac only), `~/.npm`, `~/.bun/install/cache`, Yarn's cache and `~/.gradle/caches`, and `docker system df` if Docker is installed and running (Docker is optional: not installed or stopped just means "skipped").
+- **Caches:** only the ones that exist, out of your user's app caches folder (`~/Library/Caches` on a Mac, plus its 8 biggest app folders), Xcode's `DerivedData` (Mac only), `~/.npm`, `~/.bun/install/cache`, Yarn's cache and `~/.gradle/caches`, and `docker system df` if Docker is installed and running (Docker is optional: not installed or stopped just means "skipped"). Hidden folders inside the app caches folder aren't counted.
 - **Ports:** `lsof -iTCP -sTCP:LISTEN` for your user's processes, with whether each one listens on all interfaces or only locally.
 - **Processes:** your node, bun and python processes older than `orphan_hours`, with the `kill <pid>` you could run. Some may be a dev server you keep open on purpose: check before killing.
 

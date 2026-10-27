@@ -5,8 +5,25 @@ set -eu
 if [ "$(uname -s)" = "Darwin" ]; then
   exec sh scripts/notify-macos.sh
 fi
+# The engine only forwards the env vars a channel declares in `env:`, and
+# declaring NTFY_TOPIC here would make a Mac require it too. So outside macOS
+# this script reads NTFY_TOPIC (and NTFY_SERVER) from ./.env itself (the channel
+# runs from the repo root). It extracts the values; it never sources the file.
+env_value() {
+  [ -f .env ] || return 0
+  sed -n "s/^$1=//p" .env | tail -n 1 | sed "s/^\"\\(.*\\)\"\$/\\1/; s/^'\\(.*\\)'\$/\\1/"
+}
 if [ -z "${NTFY_TOPIC:-}" ]; then
+  NTFY_TOPIC=$(env_value NTFY_TOPIC)
+fi
+if [ -z "${NTFY_SERVER:-}" ]; then
+  NTFY_SERVER=$(env_value NTFY_SERVER)
+fi
+if [ -z "$NTFY_TOPIC" ]; then
   echo "The default channel outside macOS sends through ntfy and needs NTFY_TOPIC in .env (see README)." >&2
   exit 1
 fi
+export NTFY_TOPIC
+# An empty NTFY_SERVER would defeat notify-ntfy.sh's default (it uses :-).
+[ -n "$NTFY_SERVER" ] && export NTFY_SERVER
 exec sh scripts/notify-ntfy.sh
