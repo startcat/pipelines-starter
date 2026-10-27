@@ -1,5 +1,5 @@
 name: dev-machine-doctor
-description: Weekly read-only health check of a macOS development machine (free disk, biggest dev caches with the command to clean each, listening ports, long-running node/bun/python processes). Alerts only when free disk is below a threshold. Never deletes anything.
+description: Weekly read-only health check of a development machine (free disk, biggest dev caches with the command to clean each, listening ports, long-running node/bun/python processes). Alerts only when free disk is below a threshold. Never deletes anything.
 version: 1
 
 params:
@@ -38,8 +38,9 @@ steps:
       # KB → "1.2 GB" / "340 MB"
       human() { awk -v k="$1" 'BEGIN { if (k >= 1048576) printf "%.1f GB", k / 1048576; else printf "%d MB", k / 1024 }'; }
       tilde() { printf '%s' "$1" | sed "s#^$HOME#~#"; }
+      os=$(uname -s)
 
-      # 1. Free disk on /. On APFS, "Available" doesn't count purgeable space.
+      # 1. Free disk on /. On a Mac (APFS), "Available" doesn't count purgeable space.
       free_kb=$(df -k / | awk 'NR == 2 { print $4 }')
       size_kb=$(df -k / | awk 'NR == 2 { print $2 }')
       free_gb=$(( free_kb / 1048576 ))
@@ -49,34 +50,47 @@ steps:
 
       # 2. Dev caches: measured in parallel in the background, with one deadline.
       # Format: id|path|clean command|note
-      cat > "$tmp/caches" <<EOF
+      # The app-caches folder: its subfolders are summed (Yarn's is listed on its own, not added twice).
+      if [ "$os" = "Darwin" ]; then
+        apps_dir="$HOME/Library/Caches"
+        cat > "$tmp/caches" <<EOF
       derived|$HOME/Library/Developer/Xcode/DerivedData|rm -rf ~/Library/Developer/Xcode/DerivedData|quit Xcode first; it rebuilds it
       npm|$HOME/.npm|npm cache clean --force|
       bun|$HOME/.bun/install/cache|bun pm cache rm|
       yarn|$HOME/Library/Caches/Yarn|yarn cache clean|
       gradle|$HOME/.gradle/caches|rm -rf ~/.gradle/caches|stop Gradle daemons first with gradle --stop
       EOF
+      else
+        apps_dir="$HOME/.cache"
+        cat > "$tmp/caches" <<EOF
+      npm|$HOME/.npm|npm cache clean --force|
+      bun|$HOME/.bun/install/cache|bun pm cache rm|
+      gradle|$HOME/.gradle/caches|rm -rf ~/.gradle/caches|stop Gradle daemons first with gradle --stop
+      yarn|$HOME/.cache/yarn|yarn cache clean|
+      EOF
+      fi
+      apps_label=$(tilde "$apps_dir")
       : > "$tmp/jobs"
       while IFS='|' read -r id path cmd note; do
         [ -d "$path" ] || continue
         du -sk "$path" > "$tmp/du.$id" 2>/dev/null &
         echo "$id $!" >> "$tmp/jobs"
       done < "$tmp/caches"
-      if [ -d "$HOME/Library/Caches" ]; then
-        # One entry per app folder; the total of ~/Library/Caches is their sum.
-        du -sk "$HOME/Library/Caches"/* > "$tmp/du.libcaches" 2>/dev/null &
+      if [ -d "$apps_dir" ]; then
+        # One entry per app folder; the total of the folder is their sum.
+        du -sk "$apps_dir"/* > "$tmp/du.libcaches" 2>/dev/null &
         echo "libcaches $!" >> "$tmp/jobs"
       fi
 
       # 3. Docker, only if installed (it is not a requirement) and the daemon answers.
       docker_bin=$(command -v docker 2>/dev/null || true)
-      for c in /usr/local/bin/docker /opt/homebrew/bin/docker "$HOME/.docker/bin/docker" "$HOME/.orbstack/bin/docker" /Applications/Docker.app/Contents/Resources/bin/docker; do
+      for c in /usr/local/bin/docker /usr/bin/docker /opt/homebrew/bin/docker "$HOME/.docker/bin/docker" "$HOME/.orbstack/bin/docker" /Applications/Docker.app/Contents/Resources/bin/docker; do
         [ -n "$docker_bin" ] && break
         [ -x "$c" ] && docker_bin="$c"
       done
       docker_pid=""
       if [ -n "$docker_bin" ]; then
-        "$docker_bin" system df > "$tmp/docker.out" 2>/dev/null &
+        "$docker_bin" system df > "$tmp/docker.out" 2> "$tmp/docker.err" &
         echo "docker $!" >> "$tmp/jobs"
       fi
 
@@ -99,7 +113,7 @@ steps:
         if timed_out libcaches; then
           if [ "$lib_kb" -gt 0 ]; then lib_size="more than $lib_size (timed out)"; else lib_size="timed out"; fi
         fi
-        cache_rows="$cache_rows| \`~/Library/Caches\` (all apps, includes Yarn below) | $lib_size | Per app folder: quit the app, then \`rm -rf ~/Library/Caches/<folder>\` |
+        cache_rows="$cache_rows| \`$apps_label\` (all apps, includes Yarn below) | $lib_size | Per app folder: quit the app, then \`rm -rf $apps_label/<folder>\` |
       "
       fi
       while IFS='|' read -r id path cmd note; do
@@ -127,6 +141,8 @@ steps:
         docker_md="Docker is not installed (or not on the usual paths): skipped."
       elif timed_out docker; then
         docker_md="Docker is installed but \`docker system df\` didn't answer in time (daemon starting or stuck): skipped."
+      elif grep -qi 'permission denied' "$tmp/docker.err" 2>/dev/null; then
+        docker_md="Docker is installed but this user can't reach the daemon (not in the docker group?): skipped."
       elif [ -s "$tmp/docker.out" ]; then
         docker_md=$(printf '```\n%s\n```\n\nTo reclaim it, by hand: `docker system prune` (stopped containers, unused networks, dangling images and build cache). `docker system prune -a --volumes` frees more but also deletes every unused image and volume.' "$(cat "$tmp/docker.out")")
       else
@@ -164,6 +180,8 @@ steps:
       [ -z "$procs" ] || n_procs=$(printf '%s\n' "$procs" | wc -l | tr -d ' ')
 
       # Report
+      disk_note=""
+      [ "$os" != "Darwin" ] || disk_note=" On APFS this does not count purgeable space, so Finder may show a bit more."
       if [ "$low_disk" -eq 1 ]; then
         title="Low disk: $free_gb GB free on / (minimum $min_free_gb GB)"
       else
@@ -173,12 +191,12 @@ steps:
       [ "$n_procs" -eq 0 ] || title="$title, $n_procs long-running process(es)"
       {
         printf '# %s\n\n%s · read-only check: nothing was deleted or stopped. The commands below are for you to run by hand if you want.\n\n' "$title" "$(date '+%Y-%m-%d %H:%M')"
-        printf '## Disk\n\n%s free of %s on `/` (alert below %s GB). On APFS this does not count purgeable space, so Finder may show a bit more.\n\n' "$(human "$free_kb")" "$(human "$size_kb")" "$min_free_gb"
+        printf '## Disk\n\n%s free of %s on `/` (alert below %s GB).%s\n\n' "$(human "$free_kb")" "$(human "$size_kb")" "$min_free_gb" "$disk_note"
         printf '## Dev caches\n\n| Cache | Size | To clean it, run by hand |\n|---|---|---|\n%s\n' "$cache_rows"
         if [ -n "$top_rows" ]; then
           partial=""
           if timed_out libcaches; then partial=" (partial: measuring timed out)"; fi
-          printf '### Biggest folders in `~/Library/Caches`%s\n\n| Folder | Size |\n|---|---|\n%s\n\n' "$partial" "$top_rows"
+          printf '### Biggest folders in `%s`%s\n\n| Folder | Size |\n|---|---|\n%s\n\n' "$apps_label" "$partial" "$top_rows"
         fi
         printf '## Docker\n\n%s\n\n' "$docker_md"
         if [ "$n_ports" -gt 0 ]; then
