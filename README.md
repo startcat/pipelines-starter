@@ -1,13 +1,13 @@
 # pipelines-starter
 
-Seven ready-to-use pipelines for [agentic-pipelines](https://github.com/startcat/agentic-pipelines): small, useful jobs that run on their own on your Mac, every day or every week, and tell you when something needs your attention.
+Seven ready-to-use pipelines for [agentic-pipelines](https://github.com/startcat/agentic-pipelines): small, useful jobs that run on their own on your Mac or Linux machine, every day or every week, and tell you when something needs your attention.
 
 | Pipeline | What it does | Agent | Schedule |
 |---|---|---|---|
 | [site-checks](pipelines/site-checks/) | Checks your websites: HTTP errors, slow pages, TLS certificates about to expire. Alerts only when something is wrong. | — | daily |
 | [stale-prs](pipelines/stale-prs/) | Pull requests in your GitHub repos that nobody has touched for days. | — | weekdays |
 | [issues-already-fixed](pipelines/issues-already-fixed/) | Open issues that a merged commit already references, so they are probably done. | — | weekly |
-| [dev-machine-doctor](pipelines/dev-machine-doctor/) | Disk space, the biggest developer caches, open ports and forgotten processes on your Mac. Read-only. | — | weekly |
+| [dev-machine-doctor](pipelines/dev-machine-doctor/) | Disk space, the biggest developer caches, open ports and forgotten processes on your machine. Read-only. | — | weekly |
 | [weekly-briefing](pipelines/weekly-briefing/) | A plain-language summary of the week in your repos, for someone who doesn't read pull requests. | ✓ | Fridays |
 | [docs-drift](pipelines/docs-drift/) | Compares a repo's docs with its code and prepares fixes on a local branch. Never pushes. | ✓ | weekly |
 | [news-digest](pipelines/news-digest/) | Reads your RSS feeds and YouTube channels and writes a digest with content ideas. | ✓ | daily |
@@ -18,13 +18,29 @@ Every pipeline is **read-only by default**: nothing pushes, merges, closes or de
 
 ## Quick start
 
-**1. Install the engine** (needs macOS, [Bun](https://bun.sh), `git` and `jq`; the pipelines with an agent also need an [Anthropic API key](https://platform.claude.com/)):
+**1. Install the engine** (needs macOS, or Linux with systemd; plus [Bun](https://bun.sh), `git` and `jq`; the pipelines with an agent also need an [Anthropic API key](https://platform.claude.com/)):
 
 ```bash
 git clone https://github.com/startcat/agentic-pipelines.git ~/agentic-pipelines
 cd ~/agentic-pipelines && bun install
-alias pipelines="bun run ~/agentic-pipelines/src/cli/index.ts"   # add this line to your ~/.zshrc
+alias pipelines="bun run ~/agentic-pipelines/src/cli/index.ts"   # add this line to your ~/.zshrc (or ~/.bashrc on Linux)
 ```
+
+**On Linux** (a server or a desktop with systemd), a few things to do first, once:
+
+```bash
+sudo apt install unzip git jq                       # unzip is needed by the Bun installer
+curl -fsSL https://bun.sh/install | bash            # then open a new shell, or: source ~/.bashrc
+sudo loginctl enable-linger $USER                   # without it, timers don't fire when you are logged out
+sudo timedatectl set-timezone Europe/Madrid         # schedules are read in the machine's local time
+```
+
+- Pipelines are scheduled as systemd **user timers**. `pipelines install` refuses to install if linger is off, unless you pass `--force`.
+- Shell steps run with `bash --posix`, so `bash` must be installed (it is by default on Ubuntu and Debian).
+- Set `NTFY_TOPIC` in `.env` (step 2): outside macOS, the `default` notification channel needs it. See [Notifications](#notifications).
+- The dashboard listens on `127.0.0.1:7717` only. From your laptop, reach it with `ssh -L 7717:127.0.0.1:7717 <server>` and open http://127.0.0.1:7717.
+
+The full walkthrough is in the engine's [Install on Linux](https://github.com/startcat/agentic-pipelines#install-on-linux) section.
 
 **2. Get the starter** — click **Use this template** on GitHub to get your own copy, or clone it:
 
@@ -46,7 +62,7 @@ pipelines install docs-drift --set repo_url="https://github.com/your-org/your-re
 pipelines install news-digest --set feeds="https://simonwillison.net/atom/everything/"
 ```
 
-`install` checks that your Mac has everything the pipeline needs, saves your settings in `.params.local.json` (gitignored) and schedules it with `launchd`. To try a pipeline right now instead of waiting for its schedule, use `run` with the same `--set` options:
+`install` checks that your machine has everything the pipeline needs, saves your settings in `.params.local.json` (gitignored) and schedules it with `launchd` on macOS or a systemd user timer on Linux. To try a pipeline right now instead of waiting for its schedule, use `run` with the same `--set` options:
 
 ```bash
 pipelines run site-checks --set urls="https://example.com"

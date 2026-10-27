@@ -1,6 +1,6 @@
 # dev-machine-doctor
 
-Once a week, a read-only health check of your development machine: **free disk, the biggest dev caches (with the exact command to clean each one), listening TCP ports and node/bun/python processes left running for days**. It alerts you only when free disk is low, and it never deletes or stops anything.
+Once a week, a read-only health check of your development machine (macOS or Linux): **free disk, the biggest dev caches (with the exact command to clean each one), listening TCP ports and node/bun/python processes left running for days**. It alerts you only when free disk is low, and it never deletes or stops anything.
 
 Shell only: no agent, no tokens, no cost. No token or network access needed.
 
