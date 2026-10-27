@@ -34,7 +34,8 @@ steps:
       set -euo pipefail
       since_days="{{params.since_days}}"
       max_pages=$(( ({{params.max_commits}} + 99) / 100 ))
-      since=$(date -u -v-"${since_days}"d '+%Y-%m-%dT%H:%M:%SZ')
+      # BSD date (macOS) first, GNU date (Linux) as the fallback.
+      since=$(date -u -v-"${since_days}"d '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d "${since_days} days ago" '+%Y-%m-%dT%H:%M:%SZ')
       tmp=$(mktemp -d)
       trap 'rm -rf "$tmp"' EXIT
 

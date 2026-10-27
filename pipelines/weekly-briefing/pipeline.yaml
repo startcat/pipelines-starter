@@ -50,10 +50,13 @@ steps:
       [ -n "$dir" ] || dir="$HOME/Library/Application Support/pipelines/workspaces/weekly-briefing"
       mkdir -p "$dir"
       rm -f "$dir"/*.md
-      json=$(mktemp -t weekly-briefing)
+      # An explicit template: GNU mktemp rejects `-t name` without X's.
+      tmpdir=${TMPDIR:-/tmp}
+      json=$(mktemp "${tmpdir%/}/weekly-briefing.XXXXXX")
       trap 'rm -f "$json"' EXIT
-      since=$(date -u -v-"${days}"d +%Y-%m-%dT%H:%M:%SZ)
-      since_day=$(LC_ALL=C date -v-"${days}"d '+%a %d %b %Y')
+      # BSD date (macOS) first, GNU date (Linux) as the fallback.
+      since=$(date -u -v-"${days}"d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ)
+      since_day=$(LC_ALL=C date -v-"${days}"d '+%a %d %b %Y' 2>/dev/null || LC_ALL=C date -d "${days} days ago" '+%a %d %b %Y')
       today=$(LC_ALL=C date '+%a %d %b %Y')
       week=$(date +%V | sed -E 's/^0//')
       api() {
