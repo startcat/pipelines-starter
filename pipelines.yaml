@@ -1,7 +1,11 @@
 # Notification channels shared by every pipeline in this repo.
-# Each pipeline picks one with `notify.channel`. `macos` works out of the box;
-# `ntfy` pushes to your phone and needs NTFY_TOPIC in .env (see README).
+# Each pipeline picks one with `notify.channel`. `default` shows a macOS
+# notification on a Mac and pushes through ntfy anywhere else (it needs
+# NTFY_TOPIC in .env there). `macos` and `ntfy` force one or the other.
 channels:
+  default:
+    type: shell
+    run: scripts/notify-default.sh
   macos:
     type: shell
     run: scripts/notify-macos.sh

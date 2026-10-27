@@ -26,7 +26,7 @@ triggers:
 notify:
   on: [success, failed]
   stale_after: 200h
-  channel: macos
+  channel: default
 
 steps:
   # Clone (first run) or fetch + hard reset the pipeline's OWN clone, find the

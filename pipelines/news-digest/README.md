@@ -77,7 +77,7 @@ Each feed is tried up to three times, five seconds apart, because YouTube feeds 
 
 ## Notifications
 
-By default, a macOS notification (`notify.channel: macos`) every morning with the headline (`24 new items · 16 worth a look`), and one if the run fails. To get it on your phone instead, set `NTFY_TOPIC` in `.env` and change the channel to `ntfy` in [`pipeline.yaml`](pipeline.yaml). See the [main README](../../README.md#notifications).
+By default (`notify.channel: default`), a macOS notification on a Mac (ntfy elsewhere) every morning with the headline (`24 new items · 16 worth a look`), and one if the run fails. To get it on your phone instead, set `NTFY_TOPIC` in `.env` and change the channel to `ntfy` in [`pipeline.yaml`](pipeline.yaml). See the [main README](../../README.md#notifications).
 
 ## Safety
 

@@ -34,7 +34,7 @@ triggers:
 notify:
   on: [success, failed]
   stale_after: 192h
-  channel: macos
+  channel: default
 
 steps:
   # Collects the week's activity with the GitHub REST API and writes one
