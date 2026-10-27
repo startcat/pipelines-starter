@@ -9,9 +9,16 @@ fi
 # declaring NTFY_TOPIC here would make a Mac require it too. So outside macOS
 # this script reads NTFY_TOPIC (and NTFY_SERVER) from ./.env itself (the channel
 # runs from the repo root). It extracts the values; it never sources the file.
+# It accepts CRLF line endings, an optional leading `export `, quotes, and a
+# trailing ` # comment` after an unquoted value.
 env_value() {
   [ -f .env ] || return 0
-  sed -n "s/^$1=//p" .env | tail -n 1 | sed "s/^\"\\(.*\\)\"\$/\\1/; s/^'\\(.*\\)'\$/\\1/"
+  raw=$(tr -d '\r' < .env | sed -n "s/^\(export \)\{0,1\}$1=//p" | tail -n 1)
+  case $raw in
+    \"*) printf '%s\n' "$raw" | sed 's/^"\([^"]*\)".*$/\1/' ;;
+    \'*) printf '%s\n' "$raw" | sed "s/^'\\([^']*\\)'.*\$/\\1/" ;;
+    *) printf '%s\n' "$raw" | sed 's/[[:space:]][[:space:]]*#.*$//; s/[[:space:]]*$//' ;;
+  esac
 }
 if [ -z "${NTFY_TOPIC:-}" ]; then
   NTFY_TOPIC=$(env_value NTFY_TOPIC)
