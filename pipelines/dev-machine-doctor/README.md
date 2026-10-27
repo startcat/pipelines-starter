@@ -1,6 +1,6 @@
 # dev-machine-doctor
 
-Once a week, a read-only health check of your Mac as a development machine: **free disk, the biggest dev caches (with the exact command to clean each one), listening TCP ports and node/bun/python processes left running for days**. It alerts you only when free disk is low, and it never deletes or stops anything.
+Once a week, a read-only health check of your development machine: **free disk, the biggest dev caches (with the exact command to clean each one), listening TCP ports and node/bun/python processes left running for days**. It alerts you only when free disk is low, and it never deletes or stops anything.
 
 Shell only: no agent, no tokens, no cost. No token or network access needed.
 
@@ -69,8 +69,8 @@ None.
 
 What it looks at:
 
-- **Disk:** the space available on `/`. On APFS this doesn't count purgeable space, so Finder may show a bit more.
-- **Caches:** only the ones that exist, out of `~/Library/Caches` (plus its 8 biggest app folders), Xcode's `DerivedData`, `~/.npm`, `~/.bun/install/cache`, `~/Library/Caches/Yarn` and `~/.gradle/caches`, and `docker system df` if Docker is installed and running (Docker is optional: not installed or stopped just means "skipped").
+- **Disk:** the space available on `/`. On a Mac (APFS) this doesn't count purgeable space, so Finder may show a bit more.
+- **Caches:** only the ones that exist, out of your user's app caches folder (`~/Library/Caches` on a Mac, plus its 8 biggest app folders), Xcode's `DerivedData` (Mac only), `~/.npm`, `~/.bun/install/cache`, Yarn's cache and `~/.gradle/caches`, and `docker system df` if Docker is installed and running (Docker is optional: not installed or stopped just means "skipped").
 - **Ports:** `lsof -iTCP -sTCP:LISTEN` for your user's processes, with whether each one listens on all interfaces or only locally.
 - **Processes:** your node, bun and python processes older than `orphan_hours`, with the `kill <pid>` you could run. Some may be a dev server you keep open on purpose: check before killing.
 
