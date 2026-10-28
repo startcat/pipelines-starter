@@ -37,7 +37,7 @@ pipelines run weekly-briefing --set repos="acme/api"
 | `audience` | `a non-technical manager` | Who reads it. The agent adapts tone and detail, e.g. `"the sales team"` or `"our client at Acme"`. |
 | `language` | `English` | Language of the briefing, e.g. `Spanish`. |
 | `include_releases` | `true` | Also read the notes of releases published in the period. |
-| `workdir` | (empty) | Where the collected data is written for the agent. Empty means `~/Library/Application Support/pipelines/workspaces/weekly-briefing`. |
+| `workdir` | (empty) | Where the collected data is written for the agent. Empty means `~/Library/Application Support/pipelines/workspaces/weekly-briefing` on macOS, `~/.local/share/pipelines/workspaces/weekly-briefing` on Linux. |
 
 Change a param later with `pipelines install weekly-briefing --set audience="the sales team"` (the others are kept). To change the schedule, edit `triggers.cron` in [`pipeline.yaml`](pipeline.yaml) and run `pipelines install weekly-briefing` again. The wording of the briefing lives in [`steps/write.md`](steps/write.md): edit it to change the sections or the length.
 

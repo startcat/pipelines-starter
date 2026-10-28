@@ -1,5 +1,5 @@
 name: issues-already-fixed
-description: Finds open GitHub issues that a recent commit on the default branch already references ("fixes #12", "closes #12" or just "#12"), so you can close them by hand. Weekly, alerts only when there are some.
+description: 'Finds open GitHub issues that a recent commit on the default branch already references ("fixes #12", "closes #12" or just "#12"), so you can close them by hand. Weekly, alerts only when there are some.'
 version: 1
 
 params:

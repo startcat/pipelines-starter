@@ -23,7 +23,7 @@ params:
   workdir:
     description: >-
       Workspace for the fetched items and the state file (what has already been
-      digested). Empty means $HOME/Library/Application Support/pipelines/workspaces/news-digest.
+      digested). Empty means $HOME/Library/Application Support/pipelines/workspaces/news-digest on macOS, ~/.local/share/pipelines/workspaces/news-digest on Linux.
     default: ""
 
 requires:
@@ -51,7 +51,10 @@ steps:
     run: |
       set -euo pipefail
       dir="{{params.workdir}}"
-      [ -n "$dir" ] || dir="$HOME/Library/Application Support/pipelines/workspaces/news-digest"
+      if [ -z "$dir" ]; then
+        if [ "$(uname -s)" = Darwin ]; then dir="$HOME/Library/Application Support/pipelines/workspaces/news-digest"
+        else dir="${XDG_DATA_HOME:-$HOME/.local/share}/pipelines/workspaces/news-digest"; fi
+      fi
       mkdir -p "$dir"
       max="{{params.max_items}}"
       state="$dir/state.json"
