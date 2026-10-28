@@ -78,7 +78,7 @@ pipelines run site-checks --set urls="https://example.com"
 | Your settings | `.params.local.json` (written by `install --set`) |
 | Secrets | `.env` (`ANTHROPIC_API_KEY`, `GITHUB_TOKEN` and, optionally, `NTFY_TOPIC`) |
 | Run history | `.runs/` — or browse it with `pipelines web` |
-| Clones and work files of the agent pipelines | `~/Library/Application Support/pipelines/workspaces/<pipeline>/` |
+| Clones and work files of the agent pipelines | `~/Library/Application Support/pipelines/workspaces/<pipeline>/` on macOS, `~/.local/share/pipelines/workspaces/<pipeline>/` on Linux |
 
 All of these are gitignored.
 

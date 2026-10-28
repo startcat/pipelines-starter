@@ -33,7 +33,7 @@ The first run always reviews; after that, the agent only runs when the branch ha
 | `repo_url` | (required) | Git URL to clone, https or ssh (`git@github.com:owner/repo.git`). For a private repo, use a URL your `git` can already clone. |
 | `branch` | remote default branch | Branch to review. |
 | `docs` | `README.md docs` | Space-separated doc files, directories or simple globs (`docs/*.md`), relative to the repo root. Directories are searched for `.md`, `.mdx`, `.rst`, `.adoc` and `.txt` files. |
-| `workdir` | `~/Library/Application Support/pipelines/workspaces/docs-drift` | Where the pipeline keeps its own clone (`<owner>-<repo>/`) and the last reviewed commit (`<owner>-<repo>.last-reviewed`). |
+| `workdir` | (empty) | Where the pipeline keeps its own clone (`<owner>-<repo>/`) and the last reviewed commit (`<owner>-<repo>.last-reviewed`). Empty means `~/Library/Application Support/pipelines/workspaces/docs-drift` on macOS, `~/.local/share/pipelines/workspaces/docs-drift` on Linux. |
 
 Change a param later with `pipelines install docs-drift --set docs="README.md docs CONTRIBUTING.md"` (the others are kept). To change the schedule, edit `triggers.cron` in [`pipeline.yaml`](pipeline.yaml) and run `pipelines install docs-drift` again. To force a new review without new commits, delete the `.last-reviewed` file.
 
@@ -60,8 +60,8 @@ When everything matches, the headline is `docs-drift: docs match the code in own
 The fixes are committed on a local branch `docs-drift/<date>` of the pipeline's clone, and the report ends with the commands to look at them and, if you agree, push them yourself:
 
 ```sh
-cd "~/Library/Application Support/pipelines/workspaces/docs-drift/owner-repo" && git diff <sha>..docs-drift/2026-10-05
-cd "~/Library/Application Support/pipelines/workspaces/docs-drift/owner-repo" && git push origin docs-drift/2026-10-05
+cd ~/"Library/Application Support/pipelines/workspaces/docs-drift/owner-repo" && git diff <sha>..docs-drift/2026-10-05
+cd ~/"Library/Application Support/pipelines/workspaces/docs-drift/owner-repo" && git push origin docs-drift/2026-10-05
 ```
 
 On a week without new commits the report just says `docs-drift: no code changes in owner/repo since the last review` and the agent doesn't run.

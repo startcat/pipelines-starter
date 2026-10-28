@@ -13,7 +13,7 @@ params:
     description: Space-separated doc files, directories or simple globs, relative to the repo root (e.g. "README.md docs CONTRIBUTING.md"). Directories are searched for .md, .mdx, .rst, .adoc and .txt files.
     default: "README.md docs"
   workdir:
-    description: Where the pipeline keeps its clone and state. Empty means ~/Library/Application Support/pipelines/workspaces/docs-drift.
+    description: Where the pipeline keeps its clone and state. Empty means ~/Library/Application Support/pipelines/workspaces/docs-drift on macOS, ~/.local/share/pipelines/workspaces/docs-drift on Linux.
     default: ""
 
 requires:
@@ -40,7 +40,10 @@ steps:
       branch="{{params.branch}}"
       docs="{{params.docs}}"
       ws="{{params.workdir}}"
-      [ -n "$ws" ] || ws="$HOME/Library/Application Support/pipelines/workspaces/docs-drift"
+      if [ -z "$ws" ]; then
+        if [ "$(uname -s)" = Darwin ]; then ws="$HOME/Library/Application Support/pipelines/workspaces/docs-drift"
+        else ws="${XDG_DATA_HOME:-$HOME/.local/share}/pipelines/workspaces/docs-drift"; fi
+      fi
       repo=$(printf '%s' "$url" | sed -E 's#/+$##; s#\.git$##; s#^.*[:/]([^/:]+/[^/:]+)$#\1#')
       case "$repo" in
         */*) ;;

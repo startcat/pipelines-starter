@@ -43,7 +43,7 @@ On most days, YouTube's feeds answer 404 for every channel for a few hours until
 | `ideas_for` | `a small software studio's blog` | Who the three content ideas are for: your blog, newsletter, channel... |
 | `language` | `English` | Language the digest is written in. |
 | `max_items` | `40` | Most new items handed to the agent per run (the newest win). |
-| `workdir` | (empty) | Where the fetched items and the state file live. Empty means `~/Library/Application Support/pipelines/workspaces/news-digest`. |
+| `workdir` | (empty) | Where the fetched items and the state file live. Empty means `~/Library/Application Support/pipelines/workspaces/news-digest` on macOS, `~/.local/share/pipelines/workspaces/news-digest` on Linux. |
 
 Change a param later with `pipelines install news-digest --set topics="Rust, databases and developer tooling"` (the others are kept). To add a feed, set `feeds` again with the full list; a new feed starts with its last 48 hours. To change the schedule, edit `triggers.cron` in [`pipeline.yaml`](pipeline.yaml) and run `pipelines install news-digest` again.
 

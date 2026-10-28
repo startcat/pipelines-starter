@@ -19,7 +19,7 @@ params:
     description: Also read the notes of releases published in the window ("true" or "false").
     default: true
   workdir:
-    description: The agent's workspace, where the collected data is written. Empty means "$HOME/Library/Application Support/pipelines/workspaces/weekly-briefing".
+    description: The agent's workspace, where the collected data is written. Empty means "$HOME/Library/Application Support/pipelines/workspaces/weekly-briefing" on macOS, "~/.local/share/pipelines/workspaces/weekly-briefing" on Linux.
     default: ""
 
 requires:
@@ -47,7 +47,10 @@ steps:
       days="{{params.days}}"
       case "$days" in ''|*[!0-9]*) echo "days must be a whole number, got: $days" >&2; exit 1 ;; esac
       dir="{{params.workdir}}"
-      [ -n "$dir" ] || dir="$HOME/Library/Application Support/pipelines/workspaces/weekly-briefing"
+      if [ -z "$dir" ]; then
+        if [ "$(uname -s)" = Darwin ]; then dir="$HOME/Library/Application Support/pipelines/workspaces/weekly-briefing"
+        else dir="${XDG_DATA_HOME:-$HOME/.local/share}/pipelines/workspaces/weekly-briefing"; fi
+      fi
       mkdir -p "$dir"
       rm -f "$dir"/*.md
       # An explicit template: GNU mktemp rejects `-t name` without X's.
