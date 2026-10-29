@@ -105,6 +105,25 @@ pipelines uninstall <pipeline>      # stop scheduling it (keeps your settings an
 
 To change a setting, run `pipelines install <pipeline> --set key=value` again: the other settings are kept. To change a schedule, edit `triggers.cron` in the pipeline's `pipeline.yaml` and run `install` again.
 
+## Using it with Claude Code
+
+This repo turns on the engine's Claude Code plugin for everyone who clones it, so you can create, change and check pipelines in your own words:
+
+- **`new-pipeline`**: "I want a pipeline that tells me every Monday which PRs are stale". It asks one question at a time, each with a proposal, writes the `pipeline.yaml` and validates it.
+- **`edit-pipeline`**: "move the weekly briefing to 08:00", "raise its spending cap". The smallest change, validated, and a reinstall proposed when the schedule changes.
+- **`pipelines-status`**: "how are my pipelines doing?", "why did docs-drift fail?", "how much have I spent this month?", "stop news-digest".
+
+They ask before installing, uninstalling or running anything, and never read or write `.env`.
+
+Open the repo in Claude Code and accept the folder trust prompt: the `startcat` marketplace and the `agentic-pipelines` plugin are set up from [`.claude/settings.json`](.claude/settings.json), with nothing else to install. Without folder trust, or in a cloud session, they are not loaded; install them by hand instead:
+
+```
+/plugin marketplace add startcat/agentic-pipelines
+/plugin install agentic-pipelines@startcat
+```
+
+To turn the plugin off just for you, set `"agentic-pipelines@startcat": false` under `enabledPlugins` in `.claude/settings.local.json`, which is not committed.
+
 ## Make your own
 
 Every pipeline here is a plain `pipeline.yaml` you can copy and adapt. The engine's [README](https://github.com/startcat/agentic-pipelines#your-first-pipeline-in-ten-minutes) walks you through writing one in ten minutes, and the [reference](https://github.com/startcat/agentic-pipelines/blob/main/docs/reference.md) documents every field. Check yours with `pipelines validate`.
